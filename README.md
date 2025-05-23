@@ -1,4 +1,7 @@
 # Modular Magnetic Robotic System for Multimodal Shape Transformation
+<div align="center">
+<img width="513" alt="{20011AED-01BB-4066-9EC8-258BE69FF670}" src="https://github.com/user-attachments/assets/1bb3e2b8-ea44-4d8c-bde1-ca81c758fd9f" />
+</div>
 
 ## Overview
 
