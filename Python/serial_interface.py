@@ -26,7 +26,7 @@ def main():
                     time.sleep(0.2)
                     while ser.in_waiting:
                         line = ser.readline().decode().strip()
-                        print("Arduino:", line)
+                        print(line)
 
                 except KeyboardInterrupt:
                     print("\nExiting.")

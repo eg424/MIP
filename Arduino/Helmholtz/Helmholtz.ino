@@ -12,9 +12,9 @@ const int en_L_HX = 25;
 const int PWM_R_HX = 4;
 const int PWM_L_HX = 5;
 
-const float HX_slope = 0.04588;
-const float HX_intercept = -0.4;
-const float HX_I_co = 1.13;
+const float HX_slope = 0.0406;
+const float HX_intercept = 0;
+const float HX_I_co = 1.035;
 
 
 const int en_R_HY = 44;
