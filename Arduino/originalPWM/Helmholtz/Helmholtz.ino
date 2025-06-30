@@ -12,18 +12,19 @@ const int en_L_HX = 25;
 const int PWM_R_HX = 4;
 const int PWM_L_HX = 5;
 
-const float HX_slope = 0.046;
+const float HX_slope = 0.04588;
 const float HX_intercept = -0.4;
-const float HX_I_co = 0.9;
+const float HX_I_co = 1.13;
+
 
 const int en_R_HY = 44;
 const int en_L_HY = 45;
 const int PWM_R_HY = 6;
 const int PWM_L_HY = 7;
 
-const float HY_slope = 0.01572;
-const float HY_intercept =0.04;
-const float HY_I_co = 0.92;
+const float HY_intercept = 0.04;
+const float HY_I_co = 1.1;
+const float HY_slope = 0.04296;
 
 const int en_R_MY = 46;
 const int en_L_MY = 47;
@@ -103,20 +104,17 @@ void loop() {
   }
 }
 
-// 计算PWM值的函数
+
 float calculatePWM(float current, float slope, float intercept) {
-  if (current == 0)
-  {
-    return 0;
-  }
+  if (current == 0) return 0;
 
   float pwmValue = (current - intercept) / slope;
 
-  if (pwmValue < 0) {
-    return 0;
-  }
+  // Clamp to 0–255
+  pwmValue = constrain(pwmValue, 0, 255);
   return pwmValue;
 }
+
 
 // 设置线圈电流的函数
 void setCoilCurrents(float currentMX, float currentHX, float currentMY,float currentHY) {
@@ -128,24 +126,23 @@ void setCoilCurrents(float currentMX, float currentHX, float currentMY,float cur
 }
 
 
-
-// 设置单个线圈电流的函数
 void setSingleCoilCurrent(int pinR, int pinL, float desiredCurrent, float slope, float intercept, String coilName) {
   float pwmValue;
   bool isForward = desiredCurrent > 0;
 
   float adjustedCurrent = abs(desiredCurrent);
-  pwmValue = calculatePWM(adjustedCurrent, slope, intercept);
-  Serial.print(coilName + " Coil Desired Current: ");
-  Serial.print(desiredCurrent);
-  Serial.print(" A, PWM Value: ");
+  float rawPWM = (adjustedCurrent - intercept) / slope;
+
+  // Clamp PWM
+  pwmValue = constrain(rawPWM, 0, 255);
+  Serial.print(" PWM Value: ");
   Serial.println(pwmValue);
-  
+
   if (isForward) {
-    analogWrite(pinL, pwmValue); // 设置正向电流
-    analogWrite(pinR, 0);        // 无反向电流
+    analogWrite(pinL, pwmValue);
+    analogWrite(pinR, 0);
   } else {
-    analogWrite(pinL, 0);        // 无正向电流
-    analogWrite(pinR, pwmValue); // 设置反向电流
+    analogWrite(pinL, 0);
+    analogWrite(pinR, pwmValue);
   }
 }
