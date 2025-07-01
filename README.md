@@ -29,9 +29,17 @@ This system allows for:
 
 * Opens a live video feed from a connected USB camera.
 * Press `r` to **start/stop recording**.
-* Press `q` or `Esc` to **exit**.
-* After recording, you will be prompted to **save or discard** the video.
-* Playback supports pausing (`space`), seeking, and review.
+* Press `q` or `Esc` to **stop and review** the most recent recording.
+* After recording, the video will automatically **play back** with support for:
+  * Pause/resume with `space`
+  * Seeking using a trackbar
+  * Save the recording with `s`
+  * Discard the recording with `n`
+ 
+### Key Features
+* Real-time frame capture with consistent playback speed.
+* Overlay showing current state (PLAY / PAUSE) and elapsed time.
+* Frame-accurate navigation and saving option after each recording.
 
 ### Use Case
 
@@ -96,7 +104,7 @@ Used for **manual testing** and **real-time control** of the Helmholtz coil syst
 python serial_interface.py
 ```
 
-## `modifiedPWM.ino`
+## `Helmholtz.ino`
 
 ### Description
 
@@ -143,7 +151,7 @@ PWM values are automatically calculated and set on appropriate motor pins, consi
 ## Setup
 
 1. Connect Arduino via USB to your computer.
-2. Upload `modifiedPWM.ino` to your Arduino Mega 2560.
+2. Upload `Helmholtz.ino` to your Arduino Mega 2560.
 4. Launch `serial_interface.py` or `serial_cal_test.py` as needed.
 5. Use `camera.py` for visual monitoring and recording.
 

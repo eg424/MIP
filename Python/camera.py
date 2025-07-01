@@ -3,12 +3,17 @@ import signal
 import sys
 import os
 import datetime
+import time
+import numpy as np
 
 cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
 recording = False
 out = None
 temp_filename = "temp_recording.avi"
 final_filename = None
+in_replay = False
+desired_fps = 30
+last_record_time = time.time()
 
 def cleanup_and_exit(signum=None, frame=None):
     print("\nExiting and releasing resources...")
@@ -17,51 +22,57 @@ def cleanup_and_exit(signum=None, frame=None):
     if out is not None:
         out.release()
     cv2.destroyAllWindows()
-    if final_filename:
-        play_recording(final_filename)
     sys.exit(0)
 
 def play_recording(filename):
+    global final_filename, in_replay
     print(f"\nPlaying back: {filename}")
-    cap = cv2.VideoCapture(filename)
+    cap_play = cv2.VideoCapture(filename)
 
-    if not cap.isOpened():
+    if not cap_play.isOpened():
         print("Error: Cannot open the recorded video.")
         return
 
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30 # Verify why retrieved FPS = 0
-    total_time = total_frames / fps
-    delay = 1
+    total_frames = int(cap_play.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap_play.get(cv2.CAP_PROP_FPS)
+    print(f"[DEBUG] Playback FPS reported from file: {fps}")
+
+    if fps <= 0 or fps != fps:
+        print("[DEBUG] Invalid FPS in video file. Using fallback: 30")
+        fps = 30
+
+    delay = int(1000 / fps)
+    print(f"[DEBUG] Playback delay per frame (ms): {delay}")
 
     playing = True
     current_frame = 0
+    already_saved = False
 
     def on_trackbar(val):
         nonlocal current_frame
         current_frame = val
-        cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
+        cap_play.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
 
-    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    frame_width = int(cap_play.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(cap_play.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     cv2.namedWindow('Playback')
     cv2.createTrackbar('Position', 'Playback', 0, total_frames - 1, on_trackbar)
 
+    in_replay = True
     while True:
         if playing:
-            ret, frame = cap.read()
+            ret, frame = cap_play.read()
             if not ret:
-                print("Reached end of video.")
                 playing = False
                 current_frame = total_frames - 1
-                cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
+                cap_play.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
                 continue
-            current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+            current_frame = int(cap_play.get(cv2.CAP_PROP_POS_FRAMES))
             cv2.setTrackbarPos('Position', 'Playback', current_frame)
         else:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
-            ret, frame = cap.read()
+            cap_play.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
+            ret, frame = cap_play.read()
             if not ret:
                 break
 
@@ -70,13 +81,13 @@ def play_recording(filename):
             break
 
         overlay_text = "PAUSE" if not playing else "PLAY"
-        cv2.putText(frame, f"[{overlay_text}] Space to toggle | Q/ESC to exit", (10, 30),
+        cv2.putText(frame, f"[{overlay_text}] Space: toggle | Q/ESC: exit | S: save | N: discard", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
 
-        current_time = str(datetime.timedelta(seconds=current_frame / fps)) # Print current time to .2f
-        cv2.putText(frame, f"Duration: {current_time}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        current_time = str(datetime.timedelta(seconds=current_frame / fps))
+        cv2.putText(frame, f"Duration: {current_time}", (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
-        
         if current_frame == total_frames - 1 and not playing:
             cv2.putText(frame, "End of video. Press Space to restart or Q to exit.", (10, frame_height - 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
@@ -87,29 +98,45 @@ def play_recording(filename):
 
         if key in [ord(' '), ord('p')]:
             if not playing and current_frame == total_frames - 1:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                cap_play.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 current_frame = 0
             playing = not playing
+        elif key == ord('s') and not already_saved:
+            cap_play.release()
+            cv2.destroyAllWindows()
+            timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            new_filename = f"recording_{timestamp}.avi"
+            os.rename(filename, new_filename)
+            print(f"Recording saved as {new_filename}")
+            final_filename = new_filename
+            already_saved = True
+            in_replay = False
+        
+            # Confirmation overlay
+            cv2.putText(frame, "SAVED", (200, 200),
+                        cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 2)
+            cv2.imshow('Playback', frame)
+            cv2.waitKey(1000)
+            return
+        elif key == ord('n') and not already_saved:
+            cap_play.release()
+            cv2.destroyAllWindows()
+            os.remove(filename)
+            print("Recording discarded.")
+            final_filename = None
+            already_saved = True
+            in_replay = False
+            return
         elif key in [ord('q'), 27]:
             break
 
-    cap.release()
+    if cap_play.isOpened():
+        cap_play.release()
     cv2.destroyAllWindows()
+    in_replay = False
+    # Reset final_filename after playback exit to avoid replays
+    final_filename = None
 
-    while True:
-        choice = input("Save this recording? (y/n): ").strip().lower()
-        if choice == 'y':
-            timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S') # Change to control sequence written in serial
-            new_filename = f"recording_{timestamp}.avi"
-            os.rename(filename, new_filename)
-            print(f"Saved as {new_filename}")
-            break
-        elif choice == 'n':
-            os.remove(filename)
-            print("Recording discarded.")
-            break
-        else:
-            print("Please enter 'y' or 'n'.")
 
 signal.signal(signal.SIGINT, cleanup_and_exit)
 
@@ -119,34 +146,52 @@ if not cap.isOpened():
 
 frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-fps = 30 # cap.get(cv2.CAP_PROP_FPS) or 30 # Verify why retrieved FPS = 0
+print(f"[DEBUG] Forcing recording FPS: {desired_fps}")
 
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        print("Can't receive frame")
-        break
+def main_loop():
+    global recording, out, final_filename, last_record_time
 
-    if recording:
-        out.write(frame)
-        cv2.putText(frame, "REC", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("Can't receive frame")
+            break
 
-    cv2.imshow('USB Camera Feed', frame)
+        now = time.time()
 
-    key = cv2.waitKey(1) & 0xFF
+        if recording:
+            if now - last_record_time >= 1.0 / desired_fps:
+                out.write(frame)
+                last_record_time = now
+            cv2.putText(frame, "REC", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
-    if key == ord('q') or key == 27:
-        break
-    elif key == ord('r'):
-        if not recording:
-            print("Recording started.")
-            out = cv2.VideoWriter(temp_filename, cv2.VideoWriter_fourcc(*'XVID'), fps, (frame_width, frame_height))
-            recording = True
-        else:
-            print("Recording stopped.")
-            recording = False
-            out.release()
-            out = None
-            final_filename = temp_filename
+        cv2.imshow('USB Camera Feed', frame)
 
-cleanup_and_exit()
+        key = cv2.waitKey(1) & 0xFF
+
+        if key in [ord('q'), 27]:
+            if final_filename and not in_replay:
+                play_recording(final_filename)
+                # final_filename will be reset inside play_recording now
+            else:
+                break
+        elif key == ord('x'):
+            print("Closing camera.")
+            break
+        elif key == ord('r'):
+            if not recording:
+                print("Recording started.")
+                out = cv2.VideoWriter(temp_filename, cv2.VideoWriter_fourcc(*'XVID'),
+                                      desired_fps, (frame_width, frame_height))
+                recording = True
+                last_record_time = time.time()
+            else:
+                print("Recording stopped.")
+                recording = False
+                out.release()
+                out = None
+                final_filename = temp_filename
+
+    cleanup_and_exit()
+
+main_loop()
