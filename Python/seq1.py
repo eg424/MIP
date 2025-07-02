@@ -1,0 +1,41 @@
+import serial
+import time
+
+PORT = 'COM3'
+BAUDRATE = 9600
+
+def main():
+    try:
+        with serial.Serial(PORT, BAUDRATE, timeout=2) as ser:
+            time.sleep(2)  # Wait for Arduino to reset
+            
+            # Optional: clear any initial data
+            while ser.in_waiting:
+                print(ser.readline().decode().strip())
+
+            while True:
+                # [0,1,0,0]
+                ser.write(b'0,1,0,0\n')
+                print("Sent: 0,1,0,0")
+                time.sleep(0.5)
+
+                # Reset to 0,0,0,0
+                ser.write(b'0,0,0,0\n')
+                print("Sent: 0,0,0,0")
+                time.sleep(0.5)
+
+                # [0,0,0,1]
+                ser.write(b'0,0,0,1\n')
+                print("Sent: 0,0,0,1")
+                time.sleep(0.5)
+
+                # Reset to 0,0,0,0
+                ser.write(b'0,0,0,0\n')
+                print("Sent: 0,0,0,0")
+                time.sleep(0.5)
+
+    except serial.SerialException as e:
+        print(f"Failed to connect on {PORT}: {e}")
+
+if __name__ == "__main__":
+    main()

@@ -7,11 +7,16 @@ This branch contains code used to control and calibrate the Helmholtz coil syste
 
 ## Contents
 
+* `serial_cam.py` – Unified interface for sending coil current values and automatically recording the camera feed with synchronized control.
 * `camera.py` – Live video feed and recording of workspace for positioning and experiment tracking.
 * `serial_interface.py` – Interface to send custom current commands to Arduino via serial communication.
 * `serial_cal_test.py` – Automated script to incrementally increase current for magnetic field calibration.
 * `modifiedPWM.ino` – Arduino code with calibrated parameters to generate PWM signals for coil current control.
 * `originalPWM.ino` – The legacy version of the Arduino control script, preserved for reference.
+
+### Testing Scripts
+
+* `seq1.py` - Repeatedly sends a fixed sequence of coil current commands to Hx, Hy with 0.5-second delays.
 
 ## System Overview
 
@@ -22,6 +27,42 @@ This system allows for:
 * **Recording and playback** of microrobot movement.
 * **Calibrated PWM output** to ensure accurate current delivery.
 * **Automated current sweep** to aid in creating calibration curves using a Gaussmeter.
+
+## `serial_cam.py`
+
+### Description
+
+An integrated script that **automatically begins recording** video as soon as new current values are sent over serial. This combines the functionality of both `serial_interface.py` and `camera.py` into a **synchronized control-recording system**.
+
+### Key Features
+
+- **Automatic recording**: Starts video capture immediately after sending current input values to the Arduino.
+- **Input-based filename**: Recordings are saved with the user-inputted current values and a timestamp.
+- **Real-time camera display** with a "REC" overlay.
+- **Interactive playback mode**:
+  - `q` or `Esc`: View last recording.
+  - `space`: Pause/resume.
+  - `s`: Save recording.
+  - `n`: Discard recording.
+- **PWM zeroing mode**: Pressing `r` stops recording and sends `0,0,0,0` repeatedly over serial to safely idle the coils.
+- **Clean exit** with proper release of serial, video, and GUI resources.
+
+### Input Format
+
+* User is prompted for: MX, HX, MY, HY
+* Example input: 2.0, 1.5, -2.0, 0.5
+* This command is sent to the Arduino, and recording begins automatically.
+
+### Controls
+
+| Key        | Action                                       |
+|------------|----------------------------------------------|
+| `r`        | Stop recording and enter zero-current mode   |
+| `q` / `Esc`| Playback last recording / Exit playback mode |
+| `s`        | Save current playback video                  |
+| `n`        | Discard current playback video               |
+| `space`    | Toggle pause/play during playback            |
+
 
 ## `camera.py`
 
@@ -45,17 +86,6 @@ This system allows for:
 
 Used during field measurement experiments to ensure correct **probe placement** and **microrobot movement tracking**.
 
-### Requirements
-
-* Python 3
-* OpenCV (`pip install opencv-python`)
-
-### Run
-
-```bash
-python camera.py
-```
-
 ## `serial_cal_test.py`
 
 ### Description
@@ -77,16 +107,12 @@ When prompted, enter:
 0, 0, 0, 0
 ```
 
-### Requirements
-
-* Python 3
-* `pyserial` (`pip install pyserial`)
-
 ## `serial_interface.py`
 
 ### Description
 
-A manual interface to send current values to the Arduino over serial. Supports values for MX, HX, MY, and HY.
+* A manual interface to send current values to the Arduino over serial. Supports values for MX, HX, MY, and HY.
+* Can be used simultaneously with `camera.py` to manually record how the module reacts to different inputs.
 
 ### Example Command
 
@@ -98,11 +124,21 @@ Enter currents (e.g. 3.0, 1.5, -2.0, 0.5):
 
 Used for **manual testing** and **real-time control** of the Helmholtz coil system.
 
-### Run
 
-```bash
-python serial_interface.py
-```
+## `seq1.py`
+
+### Description
+* Connects to the serial port COM3 at 9600 baud.
+* Sends the following patterns repeatedly:
+  * [0, 1, 0, 0]
+  * [0, 0, 0, 0] (reset)
+  * [0, 0, 0, 1]
+  * [0, 0, 0, 0] (reset)
+
+* Prints the command sent to the console for logging.
+* Waits 0.5 seconds between each command.
+
+---
 
 ## `Helmholtz.ino`
 
@@ -147,13 +183,13 @@ PWM values are automatically calculated and set on appropriate motor pins, consi
   * `pyserial`
   * `opencv-python`
 
-
 ## Setup
 
 1. Connect Arduino via USB to your computer.
 2. Upload `Helmholtz.ino` to your Arduino Mega 2560.
-4. Launch `serial_interface.py` or `serial_cal_test.py` as needed.
-5. Use `camera.py` for visual monitoring and recording.
+3. Use `serial_cam.py` for unified control and recording of modules.
+4. Launch `serial_cal_test.py` if needed, for automated current sweeps.
+5. Optionally, use `camera.py` or `serial_interface.py` if needed.
 
 
 ## Notes
