@@ -7,6 +7,7 @@ import time
 import threading
 import queue
 import serial
+import importlib
 
 # Setup
 PORT = 'COM3'
@@ -28,7 +29,37 @@ input_queue = queue.Queue()
 ser = None
 pwm_zeroed = False 
 last_pwm_send_time = 0
+auto_playback_filename = None
 
+
+def run_seq_name(seq_name):
+    global recording, out, final_filename, waiting_for_input
+
+    try:
+        module = importlib.import_module(seq_name)
+        print(f"Running sequence: {seq_name}")
+        module.main()
+        print(f"Sequence '{seq_name}' finished running.")
+        
+        # Stop recording when sequence finishes
+        if recording:
+            print("Stopping recording after sequence completion.")
+            recording = False
+            print(f"Press 'Q' or 'ESC' to play the recording.")
+            
+            if out:
+                out.release()
+                out = None   
+            final_filename = temp_filename  # Set final filename to temp recording
+            auto_playback_filename = temp_filename
+            
+            # After stopping, start playback interaction automatically
+            waiting_for_input = False
+
+    except ModuleNotFoundError:
+        print(f"Sequence '{seq_name}' not found.")
+    except AttributeError:
+        print(f"'{seq_name}' does not have a 'main()' function.")
 
 def serial_thread():
     global ser, current_input_string, waiting_for_input, pwm_zeroed
@@ -39,15 +70,43 @@ def serial_thread():
 
     while True:
         if waiting_for_input:
-            user_input = input("Enter currents for MX, HX, MY, HY and separated by commas (e.g. 3.0, 1.5, -2.0, 0.5): ").strip()
-            current_input_string = user_input
-            input_queue.put(user_input)
-            waiting_for_input = False
-    
-            if ser and ser.is_open:
-                ser.write((user_input + '\n').encode())
-                pwm_zeroed = False
+            print("\nInput sequence to run:")
+            print("  - Enter sequence number/name (1, 2, 3, seq1, seq2, seq3)")
+            print("  - Or enter currents as comma-separated values (e.g. 3.0,1.5,-2.0,0.5) for manual PWM input")
+            
+            choice = input("Enter sequence number: ").strip()
+            
+            # Detect manual PWM input (comma-separated floats)
+            if ',' in choice:
+                parts = choice.split(',')
+                try:
+                    floats = [float(p.strip()) for p in parts]
+                    # If floats parsed successfully, accept manual input directly
+                    current_input_string = choice
+                    input_queue.put(choice)
+                    waiting_for_input = False
 
+                    if ser and ser.is_open:
+                        ser.write((choice + '\n').encode())
+                        pwm_zeroed = False
+                except ValueError:
+                    print("Invalid manual input format. Please enter comma-separated numbers.")
+            
+            # Detect sequence input
+            elif choice in {"1", "2", "3", "seq1", "seq2", "seq3"}:
+                seq_name = choice if choice.startswith("seq") else f"seq{choice}"
+
+                current_input_string = seq_name
+                input_queue.put(seq_name)
+                if ser and ser.is_open:
+                    ser.close()
+                run_seq_name(seq_name)
+                ser = serial.Serial(PORT, BAUDRATE, timeout=2)
+
+                waiting_for_input = False
+
+            else:
+                print("Invalid choice. Please enter a valid sequence number/name or manual currents.")
         else:
             time.sleep(0.1)
             
@@ -166,30 +225,54 @@ def play_recording(filename):
         elif key == ord('n') and not already_saved:
             cap_play.release()
             cv2.destroyAllWindows()
-            os.remove(filename)
+            
+            if os.path.exists(filename):
+                os.remove(filename)
             print("Recording discarded.")
+            
             final_filename = None
             already_saved = True
             in_replay = False
             waiting_for_input = True
+            
+            # Clear input queue
+            with input_queue.mutex:
+                input_queue.queue.clear()
+            
             return
         
         elif key in [ord('q'), 27]:
-            send_zero_pwm()
             break
 
-    if cap_play.isOpened():
-        cap_play.release()
-        
+    cap_play.release()
     cv2.destroyAllWindows()
     in_replay = False
-    final_filename = None
+    
+    if not already_saved:
+        while True:
+            choice = input("Save this recording? (y/n): ").strip().lower()
+            if choice == 'y':
+                safe_input = current_input_string.replace(' ', '')
+                timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+                new_filename = f"[{safe_input}]_{timestamp}.avi"
+                os.rename(filename, new_filename)
+                print(f"Recording saved as {new_filename}")
+                final_filename = new_filename
+                break
+            elif choice == 'n':
+                os.remove(filename)
+                print("Recording discarded.")
+                final_filename = None
+                break
+            else:
+                print("Invalid input, please enter 'y' or 'n'.")
+
     waiting_for_input = True
 
 
 def main_loop():
     global recording, out, final_filename, last_record_time, waiting_for_input
-    global pwm_zeroed, last_pwm_send_time
+    global pwm_zeroed, last_pwm_send_time, auto_playback_filename
 
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -220,16 +303,25 @@ def main_loop():
         # Start recording on new input
         if not recording and not input_queue.empty():
             input_queue.get()
-            print("Recording started.")
+            print("Recording started. Press 'R' to stop recording.")
             out = cv2.VideoWriter(temp_filename, cv2.VideoWriter_fourcc(*'XVID'), desired_fps, (frame_width, frame_height))
             recording = True
             last_record_time = time.time()
             waiting_for_input = False
+            
+        # Automated playback after sequence finishes
+        if auto_playback_filename:
+            filename_to_play = auto_playback_filename
+            auto_playback_filename = None  # Reset before playing
+            play_recording(filename_to_play)
+            final_filename = None  # It will be reset in playback if saved/discarded
+            with input_queue.mutex:
+                input_queue.queue.clear()
+            waiting_for_input = True
 
-        # Key handling
         # Press 'Q' or 'ESC' to see playback; after playback, to return to live feedback
-        if key in [ord('q'), 27]:
-            if final_filename and not in_replay:
+        elif key in [ord('q'), 27]:
+            if final_filename and os.path.exists(final_filename) and not in_replay:
                 play_recording(final_filename)
                 final_filename = None
                 # Clear queue until new input
@@ -255,11 +347,9 @@ def main_loop():
                     out = None
                 final_filename = temp_filename
 
+                send_zero_pwm()
                 pwm_zeroed = True
                 last_pwm_send_time = 0
-                send_zero_pwm()
-
-        pwm_zeroed = False
 
     cleanup_and_exit()
 

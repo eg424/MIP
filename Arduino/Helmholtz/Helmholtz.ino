@@ -135,6 +135,7 @@ void setSingleCoilCurrent(int pinR, int pinL, float desiredCurrent, float slope,
 
   // Clamp PWM
   pwmValue = constrain(rawPWM, 0, 255);
+  Serial.print(coilName);
   Serial.print(" PWM Value: ");
   Serial.println(pwmValue);
 
