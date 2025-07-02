@@ -8,13 +8,13 @@ import threading
 import queue
 import serial
 
-# === CONFIGURATION ===
+# Setup
 PORT = 'COM3'
 BAUDRATE = 9600
 CAMERA_INDEX = 1
 desired_fps = 30
 
-# === GLOBALS ===
+# Globals
 cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
 recording = False
 out = None
@@ -23,16 +23,35 @@ final_filename = None
 in_replay = False
 last_record_time = time.time()
 current_input_string = ""
-waiting_for_input = True  # Show input prompt on feed when True
+waiting_for_input = True 
 input_queue = queue.Queue()
 ser = None
-
-# New globals for PWM zeroing logic
-pwm_zeroed = False  # Tracks if PWM is forced to zero after 'r' pressed
+pwm_zeroed = False 
 last_pwm_send_time = 0
-pwm_send_interval = 0.5  # seconds between zero PWM sends to keep device happy
 
 
+def serial_thread():
+    global ser, current_input_string, waiting_for_input, pwm_zeroed
+
+    ser = serial.Serial(PORT, BAUDRATE, timeout=2)
+    time.sleep(0.5)
+    print(f"Opened serial port {PORT} at {BAUDRATE} baud.")
+
+    while True:
+        if waiting_for_input:
+            user_input = input("Enter currents for MX, HX, MY, HY and separated by commas (e.g. 3.0, 1.5, -2.0, 0.5): ").strip()
+            current_input_string = user_input
+            input_queue.put(user_input)
+            waiting_for_input = False
+    
+            if ser and ser.is_open:
+                ser.write((user_input + '\n').encode())
+                pwm_zeroed = False
+
+        else:
+            time.sleep(0.1)
+            
+            
 def cleanup_and_exit(signum=None, frame=None):
     print("\nExiting and releasing resources...")
     send_zero_pwm()
@@ -49,23 +68,16 @@ def cleanup_and_exit(signum=None, frame=None):
 def send_zero_pwm():
     global ser
     if ser and ser.is_open:
-        try:
-            zero_pwm = "0,0,0,0\n"
-            ser.write(zero_pwm.encode())
-            # print(f"Sent zero PWM to serial: {zero_pwm.strip()}")
-        except Exception as e:
-            print(f"Error sending zero PWM over serial: {e}")
+        zero_pwm = "0,0,0,0\n"
+        ser.write(zero_pwm.encode())
 
 
+# Playback Functionalities
 def play_recording(filename):
     global final_filename, in_replay, waiting_for_input
+    
     print(f"Playing back: {filename}")
     cap_play = cv2.VideoCapture(filename)
-
-    if not cap_play.isOpened():
-        print("Error: Cannot open the recorded video.")
-        return
-
     total_frames = int(cap_play.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap_play.get(cv2.CAP_PROP_FPS)
 
@@ -103,10 +115,7 @@ def play_recording(filename):
             if not ret:
                 break
 
-        if frame is None or frame.size == 0:
-            print("Invalid frame.")
-            break
-
+        # Overlay Texts
         overlay_text = "PAUSE" if not playing else "PLAY"
         cv2.putText(frame, f"[{overlay_text}] Space: toggle | Q/ESC: exit | S: save | N: discard", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
@@ -123,14 +132,18 @@ def play_recording(filename):
 
         key = cv2.waitKey(delay if playing else 50) & 0xFF
 
+        # Play/Pause
         if key in [ord(' '), ord('p')]:
             if not playing and current_frame == total_frames - 1:
                 cap_play.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 current_frame = 0
             playing = not playing
+            
+        # Save Recording    
         elif key == ord('s') and not already_saved:
             cap_play.release()
             cv2.destroyAllWindows()
+            
             # Save filename based on the currents input
             safe_input = current_input_string.replace(' ', '')
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -148,6 +161,8 @@ def play_recording(filename):
             cv2.waitKey(1000)
             waiting_for_input = True
             return
+        
+        # Discard Recording
         elif key == ord('n') and not already_saved:
             cap_play.release()
             cv2.destroyAllWindows()
@@ -158,46 +173,18 @@ def play_recording(filename):
             in_replay = False
             waiting_for_input = True
             return
+        
         elif key in [ord('q'), 27]:
             send_zero_pwm()
             break
 
     if cap_play.isOpened():
         cap_play.release()
+        
     cv2.destroyAllWindows()
     in_replay = False
     final_filename = None
     waiting_for_input = True
-
-
-
-def serial_thread():
-    global ser, current_input_string, waiting_for_input, pwm_zeroed
-
-    try:
-        ser = serial.Serial(PORT, BAUDRATE, timeout=2)
-        time.sleep(2)
-        print(f"Opened serial port {PORT} at {BAUDRATE} baud.")
-    except serial.SerialException as e:
-        print(f"Failed to open serial port {PORT}: {e}")
-        ser = None
-        waiting_for_input = False
-        return
-
-    while True:
-        if waiting_for_input:
-            user_input = input("Enter currents for MX, HX, MY, HY and separated by commas (e.g. 3.0, 1.5, -2.0, 0.5): ").strip()
-            if ser and ser.is_open:
-                try:
-                    ser.write((user_input + '\n').encode())
-                    pwm_zeroed = False  # Only clear zero-mode on new input
-                except Exception as e:
-                    print(f"Error sending to serial: {e}")
-            current_input_string = user_input
-            input_queue.put(user_input)
-            waiting_for_input = False
-        else:
-            time.sleep(0.1)  # avoid busy waiting
 
 
 def main_loop():
@@ -206,7 +193,6 @@ def main_loop():
 
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    #print(f"[DEBUG] Forcing recording FPS: {desired_fps}")
 
     while True:
         ret, frame = cap.read()
@@ -217,7 +203,7 @@ def main_loop():
 
         # Periodic zero PWM if in zero-mode
         if pwm_zeroed and ser and ser.is_open:
-            if now - last_pwm_send_time > pwm_send_interval:
+            if now - last_pwm_send_time > 0.5:
                 send_zero_pwm()
                 last_pwm_send_time = now
 
@@ -241,18 +227,23 @@ def main_loop():
             waiting_for_input = False
 
         # Key handling
+        # Press 'Q' or 'ESC' to see playback; after playback, to return to live feedback
         if key in [ord('q'), 27]:
             if final_filename and not in_replay:
                 play_recording(final_filename)
                 final_filename = None
-                # After playback, clear queue and show prompt but keep zero-mode until input
+                # Clear queue until new input
                 with input_queue.mutex:
                     input_queue.queue.clear()
                 waiting_for_input = True
             else:
                 break
+        
+        # Press 'X' to return to live feedback
         elif key == ord('x'):
             break
+        
+        # Press 'R' to stop recording
         elif key == ord('r'):
             if not recording:
                 print("Press Enter after inputting currents to start recording.")
