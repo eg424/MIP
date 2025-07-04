@@ -71,35 +71,38 @@ def serial_thread():
     while True:
         if waiting_for_input:
             print("\nInput sequence to run:")
-            print("  - Enter sequence number/name (1, 2, 3, seq1, seq2, seq3)")
-            print("  - Or enter currents as comma-separated values (e.g. 3.0,1.5,-2.0,0.5) for manual PWM input")
+            print("  - Enter sequence number (e.g. 1) or name (e.g. seq1)")
+            print("  - Or enter currents as comma-separated values (e.g. 3.0, 1.5, -2.0, 0.5) for manual input")
             
-            choice = input("Enter sequence number: ").strip()
+            choice = input("Enter desired sequence: ").strip()
             
             # Detect manual PWM input (comma-separated floats)
             if ',' in choice:
                 parts = choice.split(',')
-                try:
-                    floats = [float(p.strip()) for p in parts]
-                    # If floats parsed successfully, accept manual input directly
-                    current_input_string = choice
-                    input_queue.put(choice)
-                    waiting_for_input = False
+                floats = [float(p.strip()) for p in parts]
+                # If floats parsed successfully, accept manual input directly
+                current_input_string = choice
+                input_queue.put(choice)
+                waiting_for_input = False
 
-                    if ser and ser.is_open:
-                        ser.write((choice + '\n').encode())
-                        pwm_zeroed = False
-                except ValueError:
-                    print("Invalid manual input format. Please enter comma-separated numbers.")
-            
+                if ser and ser.is_open:
+                    time.sleep(0.5)
+                    ser.write((choice + '\n').encode())
+                    pwm_zeroed = False
+                    
+                print(f"Recording started. Press 'R' to stop recording.")
+
             # Detect sequence input
-            elif choice in {"1", "2", "3", "seq1", "seq2", "seq3"}:
+            elif choice in {"1", "2", "3", "4", "5", "6", "7", "seq1", "seq2", "seq3", "seq4", "seq5", "seq6", "seq7"}:
                 seq_name = choice if choice.startswith("seq") else f"seq{choice}"
 
                 current_input_string = seq_name
                 input_queue.put(seq_name)
+                
                 if ser and ser.is_open:
                     ser.close()
+                    
+                print("Recording started. Will stop automatically when sequence ends.")    
                 run_seq_name(seq_name)
                 ser = serial.Serial(PORT, BAUDRATE, timeout=2)
 
@@ -303,7 +306,6 @@ def main_loop():
         # Start recording on new input
         if not recording and not input_queue.empty():
             input_queue.get()
-            print("Recording started. Press 'R' to stop recording.")
             out = cv2.VideoWriter(temp_filename, cv2.VideoWriter_fourcc(*'XVID'), desired_fps, (frame_width, frame_height))
             recording = True
             last_record_time = time.time()
