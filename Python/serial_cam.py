@@ -248,7 +248,7 @@ def play_recording(filename):
             os.rename(filename, new_filename)
             print(f"Recording saved as {new_filename}")
 
-            # --- New code to overlay duration on saved video ---
+            # Overlay duration on saved video
             cap_video = cv2.VideoCapture(new_filename)
             fourcc = cv2.VideoWriter_fourcc(*'XVID')
             fps = cap_video.get(cv2.CAP_PROP_FPS)
@@ -267,7 +267,7 @@ def play_recording(filename):
                 seconds = int(frame_idx / fps)
                 overlay_text = f"({seconds} s)"
                 cv2.putText(frame, overlay_text, (10, height - 20),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
                 out_video.write(frame)
 
             cap_video.release()
@@ -277,16 +277,38 @@ def play_recording(filename):
             os.remove(new_filename)
             os.rename(temp_overlay_filename, new_filename)
 
+            # Save trajectory image using last frame and trajectories
+            if len(trajectories) > 0 and len(trajectories[0]) > 0:
+                # Reload last frame without overlay text
+                cap_reopen = cv2.VideoCapture(new_filename)
+                cap_reopen.set(cv2.CAP_PROP_POS_FRAMES, total_frames - 1)
+                ret, last_frame = cap_reopen.read()
+                cap_reopen.release()
+
+                if ret:
+                    traj_img = last_frame.copy()
+                    for i in range(len(trajectories[0])):
+                        points = []
+                        for t in trajectories:
+                            if len(t) > i:
+                                points.append(t[i])
+                        for j in range(1, len(points)):
+                            cv2.line(traj_img, points[j-1], points[j], (0, 0, 255), 2)
+                    
+                    img_filename = new_filename.rsplit('.', 1)[0] + ".png"
+                    cv2.imwrite(img_filename, traj_img)
+                    print(f"Trajectory image saved as '{img_filename}'")
+                else:
+                    print("Failed to retrieve last frame for trajectory image.")
+
             final_filename = new_filename
             already_saved = True
             in_replay = False
 
-            # Confirmation overlay - no need to show here since window closed
-            print("Duration overlay added to saved video.")
+            print("Duration overlay and trajectory image saved.")
 
             waiting_for_input = True
             return
-
         
         # Discard Recording
         elif key == ord('n') and not already_saved:
@@ -307,33 +329,6 @@ def play_recording(filename):
                 input_queue.queue.clear()
             
             return
-        
-        elif key == ord('t') and current_frame == total_frames - 1 and not playing:
-            # Save the last frame with trajectory lines, without overlay text
-            if len(trajectories) > 0:
-                # Make a copy of the last frame without text overlays
-                traj_frame = frame.copy()
-
-                # Clear overlay texts by reloading original frame from video for this frame
-                cap_play.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
-                ret, original_frame = cap_play.read()
-                if ret:
-                    traj_frame = original_frame.copy()
-                    # Draw trajectory lines on traj_frame
-                    for i in range(len(trajectories[0])):
-                        points = []
-                        for t in trajectories:
-                            if len(t) > i:
-                                points.append(t[i])
-                        for j in range(1, len(points)):
-                            cv2.line(traj_frame, points[j-1], points[j], (0, 0, 255), 2)
-                    cv2.imwrite("trajectory_only.png", traj_frame)
-                    print("Trajectory-only image saved as 'trajectory_only.png'")
-                else:
-                    print("Failed to retrieve original frame for trajectory saving.")
-            else:
-                print("No trajectory data to save.")
-
         
         elif key in [ord('q'), 27]:
             break
@@ -377,16 +372,6 @@ def main_loop():
         ret, frame = cap.read()
         if not ret:
             break
-        
-        # # Detect squares in current frame
-        # centroids = detect_centroids(frame)
-
-        # # Store centroids for this frame
-        # all_centroids.append(centroids)
-
-        # # Draw centroids on frame
-        # for (cx, cy) in centroids:
-        #     cv2.circle(frame, (cx, cy), 5, (0, 255, 0), -1)  # Green circles on detected modules
 
         now = time.time()
 
