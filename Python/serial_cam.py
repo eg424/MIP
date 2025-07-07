@@ -8,6 +8,8 @@ import threading
 import queue
 import serial
 import importlib
+from tracking import detect_centroids
+import numpy as np
 
 # Setup
 PORT = 'COM3'
@@ -33,10 +35,12 @@ auto_playback_filename = None
 
 
 def run_seq_name(seq_name):
-    global recording, out, final_filename, waiting_for_input
+    global recording, out, final_filename, waiting_for_input, auto_playback_filename
+    
+    seq_path = f"Sequences.{seq_name}"
 
     try:
-        module = importlib.import_module(seq_name)
+        module = importlib.import_module(seq_path)
         print(f"Running sequence: {seq_name}")
         module.main()
         print(f"Sequence '{seq_name}' finished running.")
@@ -60,6 +64,7 @@ def run_seq_name(seq_name):
         print(f"Sequence '{seq_name}' not found.")
     except AttributeError:
         print(f"'{seq_name}' does not have a 'main()' function.")
+
 
 def serial_thread():
     global ser, current_input_string, waiting_for_input, pwm_zeroed
@@ -93,7 +98,9 @@ def serial_thread():
                 print(f"Recording started. Press 'R' to stop recording.")
 
             # Detect sequence input
-            elif choice in {"1", "2", "3", "4", "5", "6", "7", "seq1", "seq2", "seq3", "seq4", "seq5", "seq6", "seq7"}:
+            valid_sequences = {str(i) for i in range(1,8)}.union({f"seq{i}" for i in range(1,8)})
+
+            if choice in valid_sequences:
                 seq_name = choice if choice.startswith("seq") else f"seq{choice}"
 
                 current_input_string = seq_name
@@ -134,7 +141,6 @@ def send_zero_pwm():
         ser.write(zero_pwm.encode())
 
 
-# Playback Functionalities
 def play_recording(filename):
     global final_filename, in_replay, waiting_for_input
     
@@ -148,6 +154,9 @@ def play_recording(filename):
     playing = True
     current_frame = 0
     already_saved = False
+    trajectories = []
+    show_trajectories = False
+    trajectory_img = None
 
     def on_trackbar(val):
         nonlocal current_frame
@@ -169,8 +178,14 @@ def play_recording(filename):
                 current_frame = total_frames - 1
                 cap_play.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
                 continue
+            
             current_frame = int(cap_play.get(cv2.CAP_PROP_POS_FRAMES))
             cv2.setTrackbarPos('Position', 'Playback', current_frame)
+            
+            centroids = detect_centroids(frame)
+            centroids = [(cX + 270, cY + 0) for (cX, cY) in centroids]  # Due to crop
+            trajectories.append(centroids)
+            
         else:
             cap_play.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
             ret, frame = cap_play.read()
@@ -179,7 +194,7 @@ def play_recording(filename):
 
         # Overlay Texts
         overlay_text = "PAUSE" if not playing else "PLAY"
-        cv2.putText(frame, f"[{overlay_text}] Space: toggle | Q/ESC: exit | S: save | N: discard", (10, 30),
+        cv2.putText(frame, f"[{overlay_text}] Space: toggle | Q/ESC: exit | S: save | N: discard | T: save traj", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
 
         current_time = str(datetime.timedelta(seconds=current_frame / fps))
@@ -189,6 +204,26 @@ def play_recording(filename):
         if current_frame == total_frames - 1 and not playing:
             cv2.putText(frame, "End of video. Press Space to restart or Q to exit.", (10, frame_height - 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+            
+            # Draw trajectory paths for each detected object on frame
+            for i in range(len(trajectories[0])):  # Assume number of objects is constant
+                points = []
+                for t in trajectories:
+                    if len(t) > i:  # Object exists in this frame
+                        points.append(t[i])
+                for j in range(1, len(points)):
+                    cv2.line(frame, points[j-1], points[j], (0, 0, 255), 2)
+
+            # Create blank image for trajectory-only saving (once)
+            if trajectory_img is None:
+                trajectory_img = np.zeros_like(frame)
+                for i in range(len(trajectories[0])):
+                    points = []
+                    for t in trajectories:
+                        if len(t) > i:
+                            points.append(t[i])
+                    for j in range(1, len(points)):
+                        cv2.line(trajectory_img, points[j-1], points[j], (0, 0, 255), 2)
 
         cv2.imshow('Playback', frame)
 
@@ -205,24 +240,53 @@ def play_recording(filename):
         elif key == ord('s') and not already_saved:
             cap_play.release()
             cv2.destroyAllWindows()
-            
+
             # Save filename based on the currents input
             safe_input = current_input_string.replace(' ', '')
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
             new_filename = f"[{safe_input}]_{timestamp}.avi"
             os.rename(filename, new_filename)
             print(f"Recording saved as {new_filename}")
+
+            # --- New code to overlay duration on saved video ---
+            cap_video = cv2.VideoCapture(new_filename)
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+            fps = cap_video.get(cv2.CAP_PROP_FPS)
+            width = int(cap_video.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap_video.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            total_frames = int(cap_video.get(cv2.CAP_PROP_FRAME_COUNT))
+
+            temp_overlay_filename = f"overlay_{new_filename}"
+            out_video = cv2.VideoWriter(temp_overlay_filename, fourcc, fps, (width, height))
+
+            for frame_idx in range(total_frames):
+                ret, frame = cap_video.read()
+                if not ret:
+                    break
+                # Duration in seconds (integer)
+                seconds = int(frame_idx / fps)
+                overlay_text = f"({seconds} s)"
+                cv2.putText(frame, overlay_text, (10, height - 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                out_video.write(frame)
+
+            cap_video.release()
+            out_video.release()
+
+            # Replace original saved file with overlayed version
+            os.remove(new_filename)
+            os.rename(temp_overlay_filename, new_filename)
+
             final_filename = new_filename
             already_saved = True
             in_replay = False
-            
-            # Confirmation overlay
-            cv2.putText(frame, "SAVED", (200, 200),
-                        cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 2)
-            cv2.imshow('Playback', frame)
-            cv2.waitKey(1000)
+
+            # Confirmation overlay - no need to show here since window closed
+            print("Duration overlay added to saved video.")
+
             waiting_for_input = True
             return
+
         
         # Discard Recording
         elif key == ord('n') and not already_saved:
@@ -243,6 +307,33 @@ def play_recording(filename):
                 input_queue.queue.clear()
             
             return
+        
+        elif key == ord('t') and current_frame == total_frames - 1 and not playing:
+            # Save the last frame with trajectory lines, without overlay text
+            if len(trajectories) > 0:
+                # Make a copy of the last frame without text overlays
+                traj_frame = frame.copy()
+
+                # Clear overlay texts by reloading original frame from video for this frame
+                cap_play.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
+                ret, original_frame = cap_play.read()
+                if ret:
+                    traj_frame = original_frame.copy()
+                    # Draw trajectory lines on traj_frame
+                    for i in range(len(trajectories[0])):
+                        points = []
+                        for t in trajectories:
+                            if len(t) > i:
+                                points.append(t[i])
+                        for j in range(1, len(points)):
+                            cv2.line(traj_frame, points[j-1], points[j], (0, 0, 255), 2)
+                    cv2.imwrite("trajectory_only.png", traj_frame)
+                    print("Trajectory-only image saved as 'trajectory_only.png'")
+                else:
+                    print("Failed to retrieve original frame for trajectory saving.")
+            else:
+                print("No trajectory data to save.")
+
         
         elif key in [ord('q'), 27]:
             break
@@ -280,10 +371,22 @@ def main_loop():
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
+    all_centroids = []
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
+        
+        # # Detect squares in current frame
+        # centroids = detect_centroids(frame)
+
+        # # Store centroids for this frame
+        # all_centroids.append(centroids)
+
+        # # Draw centroids on frame
+        # for (cx, cy) in centroids:
+        #     cv2.circle(frame, (cx, cy), 5, (0, 255, 0), -1)  # Green circles on detected modules
 
         now = time.time()
 
