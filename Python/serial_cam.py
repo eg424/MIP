@@ -182,7 +182,7 @@ def play_recording(filename):
             current_frame = int(cap_play.get(cv2.CAP_PROP_POS_FRAMES))
             cv2.setTrackbarPos('Position', 'Playback', current_frame)
             
-            centroids, bounding_boxes = detect_modules(frame)
+            centroids, bounding_boxes, crop_rect = detect_modules(frame)
             centroids = [(cX + 270, cY + 0) for (cX, cY) in centroids]  # Due to crop
             trajectories.append(centroids)
             
@@ -388,11 +388,16 @@ def main_loop():
             cv2.putText(frame, "REC", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
         if waiting_for_input:
-            centroids, bounding_boxes = detect_modules(frame)
-            for (x, y, w, h) in bounding_boxes:
-                # print(x, y, w, h) # 39 152 43 43
-                cv2.rectangle(frame, (x + 270, y), (x + 270 + w, y + h), (0, 255, 0), 1)
-        
+            centroids, bounding_boxes, crop_rect = detect_modules(frame)
+            if crop_rect is not None:
+                crop_x, crop_y, crop_w, crop_h = crop_rect
+                # Draw bounding boxes
+                for (x, y, w, h) in bounding_boxes:
+                    cv2.rectangle(frame, (x + crop_x, y + crop_y), (x + crop_x + w, y + crop_y + h), (0, 255, 0), 1)
+                for (cX, cY) in centroids:
+                    cv2.circle(frame, (cX + crop_x, cY + crop_y), 5, (0, 0, 255), -1)
+                cv2.rectangle(frame, (crop_x, crop_y), (crop_x + crop_w, crop_y + crop_h), (255, 0, 0), 2)
+            
         # Display frame
         cv2.imshow('USB Camera Feed', frame)
         key = cv2.waitKey(1) & 0xFF

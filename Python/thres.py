@@ -1,3 +1,13 @@
+
+'''
+Precisely detects centroids of images in all configurations,
+but very sensitive to lighting conditions.
+    - Crops workspace according to black values, rather than manually.
+
+* Might need to readjust thresholds/normalise to lighting values before
+running desired sequence.
+'''
+
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
@@ -32,7 +42,7 @@ def process_image(img, filename=""):
 
     # Further preprocessing
     blurred_cropped = cv2.medianBlur(cropped, 5)
-    _, th_cropped = cv2.threshold(blurred_cropped, 85, 255, cv2.THRESH_BINARY)
+    _, th_cropped = cv2.threshold(blurred_cropped, 82, 255, cv2.THRESH_BINARY)
 
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
     closed = cv2.morphologyEx(th_cropped, cv2.MORPH_CLOSE, kernel)
@@ -45,7 +55,7 @@ def process_image(img, filename=""):
 
     for i, cnt in enumerate(contours):
         area = cv2.contourArea(cnt)
-        if area < 1500 or area > 20000:
+        if area < 800 or area > 20000:
             print(f"Rejected contour {i} due to area: {area}")
             continue
 
