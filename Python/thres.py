@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import os
 
 loop = False  # Set to True to loop through all images
-single = r'C:\Users\erikg\Pictures\Screenshots\Modules\4mod2ch2liq.png'  # Failed: 4mod2ch2liq
+single = r'C:\Users\erikg\Pictures\Screenshots\Modules\4mod2ch2liq.png'
 
 def process_image(img, filename=""):
     
