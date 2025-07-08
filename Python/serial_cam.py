@@ -98,7 +98,7 @@ def serial_thread():
                 print(f"Recording started. Press 'R' to stop recording.")
 
             # Detect sequence input
-            valid_sequences = {str(i) for i in range(1,8)}.union({f"seq{i}" for i in range(1,8)})
+            valid_sequences = {str(i) for i in range(1,10)}.union({f"seq{i}" for i in range(1,10)})
 
             if choice in valid_sequences:
                 seq_name = choice if choice.startswith("seq") else f"seq{choice}"
