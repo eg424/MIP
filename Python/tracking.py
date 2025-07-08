@@ -34,7 +34,7 @@ def detect_modules(frame):
         aspect_ratio = w_cnt / float(h_cnt)
 
         if aspect_ratio < 0.4 or aspect_ratio > 2.2:
-            print(f"Rejected contour {i} due to aspect ratio: {aspect_ratio:.2f}")
+            #print(f"Rejected contour {i} due to aspect ratio: {aspect_ratio:.2f}")
             continue
 
         M = cv2.moments(cnt)

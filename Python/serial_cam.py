@@ -183,7 +183,9 @@ def play_recording(filename):
             cv2.setTrackbarPos('Position', 'Playback', current_frame)
             
             centroids, bounding_boxes, crop_rect = detect_modules(frame)
-            centroids = [(cX + 270, cY + 0) for (cX, cY) in centroids]  # Due to crop
+            if crop_rect is not None:
+                crop_x, crop_y, _, _ = crop_rect
+                centroids = [(cX + crop_x, cY + crop_y) for (cX, cY) in centroids]
             trajectories.append(centroids)
             
         else:
