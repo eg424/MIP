@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-def detect_centroids(frame):
+def detect_modules(frame):
     # Detect white squares
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
@@ -30,6 +30,7 @@ def detect_centroids(frame):
 
     # Find square centroids
     centroids = []
+    bounding_boxes = []
     for cnt in contours:
         if is_square(cnt):
             M = cv2.moments(cnt)
@@ -37,4 +38,7 @@ def detect_centroids(frame):
                 cX = int(M["m10"] / M["m00"])
                 cY = int(M["m01"] / M["m00"])
                 centroids.append((cX, cY))
-    return centroids
+                
+                x, y, w, h = cv2.boundingRect(cnt)
+                bounding_boxes.append((x, y, w, h))
+    return centroids, bounding_boxes

@@ -8,7 +8,7 @@ import threading
 import queue
 import serial
 import importlib
-from tracking import detect_centroids
+from tracking import detect_modules
 import numpy as np
 
 # Setup
@@ -182,7 +182,7 @@ def play_recording(filename):
             current_frame = int(cap_play.get(cv2.CAP_PROP_POS_FRAMES))
             cv2.setTrackbarPos('Position', 'Playback', current_frame)
             
-            centroids = detect_centroids(frame)
+            centroids, bounding_boxes = detect_modules(frame)
             centroids = [(cX + 270, cY + 0) for (cX, cY) in centroids]  # Due to crop
             trajectories.append(centroids)
             
@@ -194,7 +194,7 @@ def play_recording(filename):
 
         # Overlay Texts
         overlay_text = "PAUSE" if not playing else "PLAY"
-        cv2.putText(frame, f"[{overlay_text}] Space: toggle | Q/ESC: exit | S: save | N: discard | T: save traj", (10, 30),
+        cv2.putText(frame, f"[{overlay_text}] Space: toggle | Q/ESC: exit | S: save | N: discard", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
 
         current_time = str(datetime.timedelta(seconds=current_frame / fps))
@@ -387,6 +387,12 @@ def main_loop():
                 last_record_time = now
             cv2.putText(frame, "REC", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
+        if waiting_for_input:
+            centroids, bounding_boxes = detect_modules(frame)
+            for (x, y, w, h) in bounding_boxes:
+                # print(x, y, w, h) # 39 152 43 43
+                cv2.rectangle(frame, (x + 270, y), (x + 270 + w, y + h), (0, 255, 0), 1)
+        
         # Display frame
         cv2.imshow('USB Camera Feed', frame)
         key = cv2.waitKey(1) & 0xFF
