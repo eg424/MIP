@@ -3,8 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 
-loop = True  # Set to True to loop through all images
-single = r'C:\Users\erikg\Pictures\Screenshots\Modules\4mod2ch2liq.png'  # Failed: 4mod2ch2liq, 6mod2ch, 6mod3ch, 6mod4sq2ch
+loop = False  # Set to True to loop through all images
+single = r'C:\Users\erikg\Pictures\Screenshots\Modules\4mod2ch2liq.png'  # Failed: 4mod2ch2liq
 
 def process_image(img, filename=""):
     
@@ -53,7 +53,7 @@ def process_image(img, filename=""):
         aspect_ratio = w_cnt / h_cnt
         print(f"Contour {i} aspect ratio: {aspect_ratio:.2f}")
 
-        if aspect_ratio < 0.4 or aspect_ratio > 1.4:
+        if aspect_ratio < 0.4 or aspect_ratio > 2.2:
             print(f"Rejected contour {i} due to aspect ratio: {aspect_ratio:.2f}")
             continue
         if x_cnt < 5 or y_cnt < 5 or x_cnt + w_cnt > cropped.shape[1] - 5 or y_cnt + h_cnt > cropped.shape[0] - 5:
