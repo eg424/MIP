@@ -26,7 +26,7 @@ def detect_modules(frame):
 
     for i, cnt in enumerate(contours):
         area = cv2.contourArea(cnt)
-        if area < 1000 or area > 20000:
+        if area < 700 or area > 20000:
             continue
 
         x_cnt, y_cnt, w_cnt, h_cnt = cv2.boundingRect(cnt)
