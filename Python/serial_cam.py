@@ -8,7 +8,7 @@ import threading
 import queue
 import serial
 import importlib
-from tracking import detect_modules
+from moduleDetection import detect_modules
 import numpy as np
 
 # Setup
