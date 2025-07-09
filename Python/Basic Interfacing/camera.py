@@ -1,3 +1,20 @@
+"""
+USB camera capture and video recording with playback and save/discard options.
+
+- Captures live video from USB camera (device 1) at 30 FPS.
+- Allows user to start/stop recording with 'r' key; records to a temporary AVI file.
+- Displays live feed with recording indicator when active.
+- Press 'q' or ESC to stop live feed.
+- After stopping, playback the recorded video with controls:
+    * Space or 'p' to toggle play/pause
+    * Trackbar to seek frames
+    * 's' to save the recording with timestamped filename
+    * 'n' to discard the recording
+    * 'q' or ESC to exit playback
+- Handles cleanup on exit (releasing camera, closing windows).
+- Supports Ctrl+C interruption with graceful exit.
+"""
+
 import cv2
 import signal
 import sys
@@ -145,7 +162,7 @@ if not cap.isOpened():
 
 frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-print(f"[DEBUG] Forcing recording FPS: {desired_fps}")
+print(f"Forcing recording FPS: {desired_fps}")
 
 def main_loop():
     global recording, out, final_filename, last_record_time

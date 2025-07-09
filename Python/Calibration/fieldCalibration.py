@@ -1,3 +1,14 @@
+"""
+Serial communication with Arduino for controlling currents in MX, HX, MY, HY coils.
+Used to create calibration curves using gaussmeter (mT).
+
+- Connects to Arduino on specified COM port and reads initial message.
+- Prompts user to enter initial current values for MX, HX, MY, HY (comma-separated).
+- Validates that HY current does not exceed 10A at start.
+- Sends current values to Arduino in a loop, incrementing HY by 0.5 every 3 seconds until it reaches 10 s.
+- Stops by sending zero currents once target current is reached or on user exit (Ctrl+C).
+"""
+
 import serial
 import time
 

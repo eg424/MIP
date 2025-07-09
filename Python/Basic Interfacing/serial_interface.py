@@ -1,3 +1,12 @@
+"""
+Simple serial communication interface with Arduino for sending current values.
+
+- Connects to Arduino.
+- Continuously prompts the user to input current values (comma-separated).
+- Sends user input directly to Arduino over serial.
+- Reads and prints Arduino responses after each command.
+"""
+
 import serial
 import time
 

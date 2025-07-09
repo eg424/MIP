@@ -8,9 +8,11 @@ different modes.
       rather than manually.
 
 Modes:
-- loop: process all images in the "Modules" folder
+- loop: process all images in the "Images" folder
 - single: process one specific image file
-- live: live camera feed processing
+- live: live camera feed processing. 
+    * NOTE: Cannot be run simultaneously with main.py,
+      close the terminal before, or use a different mode.
 """
 
 import cv2
@@ -19,11 +21,11 @@ import matplotlib.pyplot as plt
 import os
 
 # Select 'loop', 'single', or 'live' 
-mode = 'live'  
+mode = 'live' 
 
 # Paths for image files/folder for modes
-folder_path = r'C:\Users\erikg\MIP\Python\Modules'  # Loop mode
-single_image_path = r'C:\Users\erikg\MIP\Python\Modules\4mod2ch2liq.png'  # Change accordingly
+folder_path = r'C:\Users\erikg\MIP\Python\Images'  # Loop mode
+single_image_path = r'C:\Users\erikg\MIP\Python\Images\4mod2ch2liq.png'  # Change accordingly
 
 def detect_modules(frame):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -201,7 +203,7 @@ def process_frame(frame):
 def live_mode():
     cap = cv2.VideoCapture(1, cv2.CAP_DSHOW) 
     if not cap.isOpened():
-        print("Error: Could not open video capture.")
+        print("Error: Could not open video capture. Close other terminals using the camera and try again.")
         return
 
     print("Press 'q' to quit live view.")
