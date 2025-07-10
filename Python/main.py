@@ -9,7 +9,7 @@ import queue
 import serial
 import importlib
 import numpy as np
-from moduleDetection import detect_modules
+from moduleDetection import detect_modules, draw_inter_module_distances
 
 # Setup
 PORT = 'COM3'
@@ -142,6 +142,9 @@ def play_recording(filename):
     trajectories = []
     trajectory_img = None
 
+    initial_frame = None
+    initial_centroids = None
+
     def on_trackbar(val):
         nonlocal current_frame
         current_frame = val
@@ -171,6 +174,12 @@ def play_recording(filename):
             if crop_rect is not None:
                 crop_x, crop_y, _, _ = crop_rect
                 centroids = [(cX + crop_x, cY + crop_y) for (cX, cY) in centroids]
+
+            # Save first frame and initial centroids for later check
+            if initial_frame is None:
+                initial_frame = frame.copy()
+                initial_centroids = centroids.copy()
+
             trajectories.append(centroids)
             
         else:
@@ -194,7 +203,7 @@ def play_recording(filename):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
             
             # Draw trajectory paths for each detected object on frame
-            for i in range(len(trajectories[0])):
+            for i in range(len(trajectories[0]) if len(trajectories) > 0 else 0):
                 points = []
                 for t in trajectories:
                     if len(t) > i:  # Object exists in this frame
@@ -271,11 +280,63 @@ def play_recording(filename):
                         for j in range(1, len(points)):
                             cv2.line(traj_img, points[j-1], points[j], (0, 0, 255), 2)
                     
-                    img_filename = new_filename.rsplit('.', 1)[0] + ".png"
+                    img_filename = new_filename.rsplit('.', 1)[0] + "_trajectory.png"
                     cv2.imwrite(img_filename, traj_img)
                     print(f"Trajectory image saved as '{img_filename}'")
                 else:
                     print("Failed to retrieve last frame for trajectory image.")
+
+            # If initially separated, save initial separation image & detect merge time
+            if initial_frame is not None and len(initial_centroids) > 1:
+                init_distance_img = initial_frame.copy()
+
+                # Re-detect modules in the initial frame to get boxes and pixels_per_mm
+                _, _, crop_rect = detect_modules(initial_frame)
+                centroids_rel, boxes_rel, _ = detect_modules(initial_frame)
+
+                if crop_rect is not None:
+                    crop_x, crop_y, _, _ = crop_rect
+                    module_boxes = [
+                        (x + crop_x, y + crop_y, x + crop_x + w, y + crop_y + h)
+                        for (x, y, w, h) in boxes_rel
+                    ]
+                else:
+                    module_boxes = []
+
+                # Estimate pixels_per_mm again from module widths
+                module_widths = [w for (x, y, w, h) in boxes_rel]
+                if module_widths:
+                    avg_width = np.mean(module_widths)
+                    real_width_mm = 3.0 * (32 / 25.7)  # calibration
+                    pixels_per_mm = avg_width / real_width_mm
+                else:
+                    pixels_per_mm = 1.0
+
+                draw_inter_module_distances(init_distance_img, module_boxes, pixels_per_mm)
+
+                # Add time overlay "0 s"
+                cv2.putText(init_distance_img, "(0 s)", (10, init_distance_img.shape[0] - 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+
+                init_distance_filename = new_filename.rsplit('.', 1)[0] + "_initial_distance.png"
+                cv2.imwrite(init_distance_filename, init_distance_img)
+                print(f"Initial distance image saved as '{init_distance_filename}'")
+
+
+                # Detect merge frame - first frame where only 1 centroid is detected
+                merge_frame_idx = None
+                for idx, centroids_in_frame in enumerate(trajectories):
+                    if len(centroids_in_frame) == 1:
+                        merge_frame_idx = idx
+                        break
+
+                if merge_frame_idx is not None:
+                    merge_time_sec = merge_frame_idx / fps
+                    print(f"Modules merged into one at frame {merge_frame_idx}, approx {merge_time_sec:.2f} seconds.")
+                    with open(new_filename.rsplit('.', 1)[0] + "_merge_time.txt", "w") as f:
+                        f.write(f"Modules merged into one at frame {merge_frame_idx} (time = {merge_time_sec:.2f} s)\n")
+                else:
+                    print("Modules did not merge into one during the recording.")
 
             final_filename = new_filename
             already_saved = True
@@ -333,8 +394,6 @@ def play_recording(filename):
                 print("Recording discarded.")
                 final_filename = None
                 break
-            else:
-                print("Invalid input, please enter 'y' or 'n'.")
 
     waiting_for_input = True
 

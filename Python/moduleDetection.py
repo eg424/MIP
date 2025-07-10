@@ -1,5 +1,6 @@
 """
-Precisely detects centroids of modules in all configurations.
+Precisely detects centroids of modules in all configurations
+and distance between them.
 
 - "detect_modules" is called in main.py for trajectory tracking.
 - "process_image" and "process_frame" are used in this script under
@@ -88,6 +89,14 @@ def detect_modules(frame):
         pixels_per_mm = 1.0
 
     # Draw all pairwise distances in mm
+    draw_inter_module_distances(frame, module_boxes, pixels_per_mm)
+
+    # Return centroids, bounding boxes relative to cropped image, and fixed crop offset for original image reference
+    return centroids, bounding_boxes, (x, y, w, h)
+
+
+def draw_inter_module_distances(frame, module_boxes, pixels_per_mm):
+    import itertools
     for (box1, box2) in itertools.combinations(module_boxes, 2):
         x11, y11, x12, y12 = box1
         x21, y21, x22, y22 = box2
@@ -104,9 +113,6 @@ def detect_modules(frame):
         mid_point = ((center1[0] + center2[0]) // 2, (center1[1] + center2[1]) // 2)
         cv2.putText(frame, f"{mm_distance:.1f} mm", mid_point,
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-
-    # Return centroids, bounding boxes relative to cropped image, and fixed crop offset for original image reference
-    return centroids, bounding_boxes, (x, y, w, h)
 
 
 def process_image(img, filename=""):

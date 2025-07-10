@@ -15,7 +15,7 @@ def main():
 
         start_time = time.time()
 
-        while time.time() - start_time < 30:
+        while time.time() - start_time < 15:
             # [0,1,0,0]
             ser.write(b'0,1,0,0\n')
             print("Sent: 0,1,0,0")
