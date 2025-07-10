@@ -4,7 +4,7 @@ Precisely detects centroids of modules in all configurations.
 - "detect_modules" is called in main.py for trajectory tracking.
 - "process_image" and "process_frame" are used in this script under
 different modes.
-    * Both functions crop the workspace according to black values,
+    * process_image crops the workspace according to black values,
       rather than manually.
 
 Modes:
@@ -19,6 +19,7 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+import itertools
 
 # Select 'loop', 'single', or 'live' 
 mode = 'live' 
@@ -49,8 +50,10 @@ def detect_modules(frame):
     centroids = []
     areas = []
     bounding_boxes = []
+    module_boxes = []
+    module_widths = []
 
-    for i, cnt in enumerate(contours):
+    for cnt in contours:
         area = cv2.contourArea(cnt)
         if area < 500 or area > 20000:
             continue
@@ -62,6 +65,9 @@ def detect_modules(frame):
         if aspect_ratio < 0.4 or aspect_ratio > 2.2:
             #print(f"Rejected contour {i} due to aspect ratio: {aspect_ratio:.2f}")
             continue
+        
+        top_left = (x + x_cnt, y + y_cnt)
+        bottom_right = (x + x_cnt + w_cnt, y + y_cnt + h_cnt)
 
         M = cv2.moments(cnt)
         if M["m00"] != 0:
@@ -69,6 +75,35 @@ def detect_modules(frame):
             cY = int(M["m01"] / M["m00"])
             centroids.append((cX, cY))
             areas.append(area)
+            
+        module_boxes.append((top_left[0], top_left[1], bottom_right[0], bottom_right[1]))
+        module_widths.append(w_cnt)  # Track widths to compute scale
+
+    # Estimate pixels per mm from one module
+    if module_widths:
+        average_module_width_px = np.mean(module_widths)
+        real_world_width_mm = 3.0 * (32/25.7) # Readjust for calibration
+        pixels_per_mm = average_module_width_px / real_world_width_mm
+    else:
+        pixels_per_mm = 1.0
+
+    # Draw all pairwise distances in mm
+    for (box1, box2) in itertools.combinations(module_boxes, 2):
+        x11, y11, x12, y12 = box1
+        x21, y21, x22, y22 = box2
+
+        dx = max(0, max(x21 - x12, x11 - x22))
+        dy = max(0, max(y21 - y12, y11 - y22))
+        pixel_distance = np.hypot(dx, dy)
+        mm_distance = pixel_distance / pixels_per_mm
+
+        center1 = ((x11 + x12) // 2, (y11 + y12) // 2)
+        center2 = ((x21 + x22) // 2, (y21 + y22) // 2)
+
+        cv2.line(frame, center1, center2, (255, 255, 0), 1)
+        mid_point = ((center1[0] + center2[0]) // 2, (center1[1] + center2[1]) // 2)
+        cv2.putText(frame, f"{mm_distance:.1f} mm", mid_point,
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
     # Return centroids, bounding boxes relative to cropped image, and fixed crop offset for original image reference
     return centroids, bounding_boxes, (x, y, w, h)
@@ -104,7 +139,7 @@ def process_image(img, filename=""):
 
     for i, cnt in enumerate(contours):
         area = cv2.contourArea(cnt)
-        if area < 700 or area > 20000:
+        if area < 500 or area > 20000:
             # print(f"Rejected contour {i} due to area: {area}")
             continue
 
@@ -150,52 +185,71 @@ def process_image(img, filename=""):
 
 
 def process_frame(frame):
-    """
-    Process a single video frame (BGR numpy array) and return frame with overlays.
-    """
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, th = cv2.threshold(blurred, 20, 255, cv2.THRESH_BINARY_INV)
-    contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    if not contours:
-        return frame
-
-    workspace_contour = max(contours, key=cv2.contourArea)
-    x, y, w, h = cv2.boundingRect(workspace_contour)
-
-    # Draw workspace bounding box (blue)
+    y, x = 10, 200
+    h, w = 335, 340
+    cropped = gray[y:y + h, x:x + w]
+    
     cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
 
-    cropped = gray[y:y + h, x:x + w]
     blurred_cropped = cv2.medianBlur(cropped, 5)
     _, th_cropped = cv2.threshold(blurred_cropped, 82, 255, cv2.THRESH_BINARY)
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
     closed = cv2.morphologyEx(th_cropped, cv2.MORPH_CLOSE, kernel)
     contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    for i, cnt in enumerate(contours):
+    module_boxes = []
+    module_widths = []
+
+    for cnt in contours:
         area = cv2.contourArea(cnt)
-        if area < 700 or area > 20000:
+        if area < 500 or area > 20000:
             continue
 
         x_cnt, y_cnt, w_cnt, h_cnt = cv2.boundingRect(cnt)
         aspect_ratio = w_cnt / h_cnt
         if aspect_ratio < 0.4 or aspect_ratio > 2.2:
             continue
-        if x_cnt < 5 or y_cnt < 5 or x_cnt + w_cnt > cropped.shape[1] - 5 or y_cnt + h_cnt > cropped.shape[0] - 5:
-            continue
 
-        # Draw rectangles (green)
         top_left = (x + x_cnt, y + y_cnt)
         bottom_right = (x + x_cnt + w_cnt, y + y_cnt + h_cnt)
-        cv2.rectangle(frame, top_left, bottom_right, (0, 255, 0))
+        cv2.rectangle(frame, top_left, bottom_right, (0, 255, 0), 2)
 
         M = cv2.moments(cnt)
         if M["m00"] != 0:
             cX = int(M["m10"] / M["m00"]) + x
             cY = int(M["m01"] / M["m00"]) + y
             cv2.circle(frame, (cX, cY), 5, (0, 0, 255), -1)
+
+        module_boxes.append((top_left[0], top_left[1], bottom_right[0], bottom_right[1]))
+        module_widths.append(w_cnt)  # Track widths to compute scale
+
+    # Estimate pixels per mm from one module
+    if module_widths:
+        average_module_width_px = np.mean(module_widths)
+        real_world_width_mm = 3.0 * (32/25.7) # Readjust for calibration
+        pixels_per_mm = average_module_width_px / real_world_width_mm
+    else:
+        pixels_per_mm = 1.0
+
+    # Draw all pairwise distances in mm
+    for (box1, box2) in itertools.combinations(module_boxes, 2):
+        x11, y11, x12, y12 = box1
+        x21, y21, x22, y22 = box2
+
+        dx = max(0, max(x21 - x12, x11 - x22))
+        dy = max(0, max(y21 - y12, y11 - y22))
+        pixel_distance = np.hypot(dx, dy)
+        mm_distance = pixel_distance / pixels_per_mm
+
+        center1 = ((x11 + x12) // 2, (y11 + y12) // 2)
+        center2 = ((x21 + x22) // 2, (y21 + y22) // 2)
+
+        cv2.line(frame, center1, center2, (255, 255, 0), 1)
+        mid_point = ((center1[0] + center2[0]) // 2, (center1[1] + center2[1]) // 2)
+        cv2.putText(frame, f"{mm_distance:.1f} mm", mid_point,
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
     return frame
 
