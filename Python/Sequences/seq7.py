@@ -19,17 +19,17 @@ def main():
             # [0,1,0,0]
             ser.write(b'0,1,0,0\n')
             print("Sent: 0,1,0,0")
-            time.sleep(1)
+            time.sleep(0.3)
 
             # [0,0,0,2.5]
             ser.write(b'0,0,0,2.5\n')
             print("Sent: 0,0,0,2.5")
-            time.sleep(1)
+            time.sleep(0.3)
 
             # Reset to 0,0,0,0
             ser.write(b'0,0,0,0\n')
             print("Sent: 0,0,0,0")
-            time.sleep(1)
+            time.sleep(0.3)
 
 if __name__ == "__main__":
     main()

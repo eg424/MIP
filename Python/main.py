@@ -8,20 +8,20 @@ import threading
 import queue
 import serial
 import importlib
-from moduleDetection import detect_modules
 import numpy as np
+from moduleDetection import detect_modules
 
 # Setup
 PORT = 'COM3'
 BAUDRATE = 9600
 CAMERA_INDEX = 1
-desired_fps = 30
+DESIRED_FPS = 30
+TEMP_FILENAME = "temp_recording.avi"
 
 # Globals
 cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
 recording = False
 out = None
-temp_filename = "temp_recording.avi"
 final_filename = None
 in_replay = False
 last_record_time = time.time()
@@ -34,7 +34,7 @@ last_pwm_send_time = 0
 auto_playback_filename = None
 
 
-def run_seq_name(seq_name):
+def run_seq(seq_name):
     global recording, out, final_filename, waiting_for_input, auto_playback_filename
     
     seq_path = f"Sequences.{seq_name}"
@@ -45,17 +45,11 @@ def run_seq_name(seq_name):
         module.main()
         print(f"Sequence '{seq_name}' finished running.")
         
-        # Stop recording when sequence finishes
         if recording:
             print("Stopping recording after sequence completion.")
-            recording = False
-            print(f"Press 'Q' or 'ESC' to play the recording.")
-            
-            if out:
-                out.release()
-                out = None   
-            final_filename = temp_filename  # Set final filename to temp recording
-            auto_playback_filename = temp_filename
+            stop_recording()
+            final_filename = TEMP_FILENAME
+            auto_playback_filename = TEMP_FILENAME
             
             # After stopping, start playback interaction automatically
             waiting_for_input = False
@@ -66,12 +60,30 @@ def run_seq_name(seq_name):
         print(f"'{seq_name}' does not have a 'main()' function.")
 
 
+def stop_recording():
+    global recording, out, pwm_zeroed, last_pwm_send_time
+    recording = False
+    if out:
+        out.release()
+    send_zero_pwm()
+    pwm_zeroed = True
+    last_pwm_send_time = 0
+    print("Recording stopped. Press 'Q' or 'ESC' to play the recording.")
+
+
+def send_zero_pwm():
+    global ser
+    if ser and ser.is_open:
+        ser.write("0,0,0,0\n".encode())
+
+
 def serial_thread():
     global ser, current_input_string, waiting_for_input, pwm_zeroed
-
     ser = serial.Serial(PORT, BAUDRATE, timeout=2)
     time.sleep(0.5)
-    print(f"Opened serial port {PORT} at {BAUDRATE} baud.")
+    # print(f"Opened serial port {PORT} at {BAUDRATE} baud.")
+    
+    valid_sequences = {str(i) for i in range(1,10)}.union({f"seq{i}" for i in range(1,10)})
 
     while True:
         if waiting_for_input:
@@ -83,64 +95,38 @@ def serial_thread():
             
             # Detect manual PWM input (comma-separated floats)
             if ',' in choice:
-                parts = choice.split(',')
-                floats = [float(p.strip()) for p in parts]
-                # If floats parsed successfully, accept manual input directly
-                current_input_string = choice
-                input_queue.put(choice)
-                waiting_for_input = False
-
-                if ser and ser.is_open:
-                    time.sleep(0.5)
-                    ser.write((choice + '\n').encode())
-                    pwm_zeroed = False
-                    
-                print(f"Recording started. Press 'R' to stop recording.")
-
-            # Detect sequence input
-            valid_sequences = {str(i) for i in range(1,10)}.union({f"seq{i}" for i in range(1,10)})
+                try:
+                    floats = [float(p.strip()) for p in choice.split(',')]
+                    current_input_string = choice
+                    input_queue.put(choice)
+                    waiting_for_input = False
+                    if ser.is_open:
+                        time.sleep(0.5)
+                        ser.write((choice + '\n').encode())
+                        pwm_zeroed = False
+                    print("Recording started. Press 'R' to stop recording.")
+                except ValueError:
+                    print("Invalid currents input. Please enter comma-separated floats.")
+                continue
 
             if choice in valid_sequences:
                 seq_name = choice if choice.startswith("seq") else f"seq{choice}"
-
                 current_input_string = seq_name
                 input_queue.put(seq_name)
                 
-                if ser and ser.is_open:
+                if ser.is_open:
                     ser.close()
-                    
                 print("Recording started. Will stop automatically when sequence ends.")    
-                run_seq_name(seq_name)
+                run_seq(seq_name)
                 ser = serial.Serial(PORT, BAUDRATE, timeout=2)
-
                 waiting_for_input = False
 
             else:
                 print("Invalid choice. Please enter a valid sequence number/name or manual currents.")
         else:
             time.sleep(0.1)
+ 
             
-            
-def cleanup_and_exit(signum=None, frame=None):
-    print("\nExiting and releasing resources...")
-    send_zero_pwm()
-    if cap.isOpened():
-        cap.release()
-    if out is not None:
-        out.release()
-    if ser is not None and ser.is_open:
-        ser.close()
-    cv2.destroyAllWindows()
-    sys.exit(0)
-
-
-def send_zero_pwm():
-    global ser
-    if ser and ser.is_open:
-        zero_pwm = "0,0,0,0\n"
-        ser.write(zero_pwm.encode())
-
-
 def play_recording(filename):
     global final_filename, in_replay, waiting_for_input
     
@@ -148,14 +134,12 @@ def play_recording(filename):
     cap_play = cv2.VideoCapture(filename)
     total_frames = int(cap_play.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap_play.get(cv2.CAP_PROP_FPS)
-
     delay = int(1000 / fps)
 
     playing = True
     current_frame = 0
     already_saved = False
     trajectories = []
-    show_trajectories = False
     trajectory_img = None
 
     def on_trackbar(val):
@@ -170,6 +154,7 @@ def play_recording(filename):
     cv2.createTrackbar('Position', 'Playback', 0, total_frames - 1, on_trackbar)
 
     in_replay = True
+    
     while True:
         if playing:
             ret, frame = cap_play.read()
@@ -181,8 +166,8 @@ def play_recording(filename):
             
             current_frame = int(cap_play.get(cv2.CAP_PROP_POS_FRAMES))
             cv2.setTrackbarPos('Position', 'Playback', current_frame)
-            
             centroids, bounding_boxes, crop_rect = detect_modules(frame)
+            
             if crop_rect is not None:
                 crop_x, crop_y, _, _ = crop_rect
                 centroids = [(cX + crop_x, cY + crop_y) for (cX, cY) in centroids]
@@ -194,7 +179,7 @@ def play_recording(filename):
             if not ret:
                 break
 
-        # Overlay Texts
+        # Overlay Text
         overlay_text = "PAUSE" if not playing else "PLAY"
         cv2.putText(frame, f"[{overlay_text}] Space: toggle | Q/ESC: exit | S: save | N: discard", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
@@ -203,12 +188,13 @@ def play_recording(filename):
         cv2.putText(frame, f"Duration: {current_time}", (10, 60),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
+        # End of video overlays and trajectory drawing
         if current_frame == total_frames - 1 and not playing:
             cv2.putText(frame, "End of video. Press Space to restart or Q to exit.", (10, frame_height - 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
             
             # Draw trajectory paths for each detected object on frame
-            for i in range(len(trajectories[0])):  # Assume number of objects is constant
+            for i in range(len(trajectories[0])):
                 points = []
                 for t in trajectories:
                     if len(t) > i:  # Object exists in this frame
@@ -216,19 +202,7 @@ def play_recording(filename):
                 for j in range(1, len(points)):
                     cv2.line(frame, points[j-1], points[j], (0, 0, 255), 2)
 
-            # Create blank image for trajectory-only saving (once)
-            if trajectory_img is None:
-                trajectory_img = np.zeros_like(frame)
-                for i in range(len(trajectories[0])):
-                    points = []
-                    for t in trajectories:
-                        if len(t) > i:
-                            points.append(t[i])
-                    for j in range(1, len(points)):
-                        cv2.line(trajectory_img, points[j-1], points[j], (0, 0, 255), 2)
-
         cv2.imshow('Playback', frame)
-
         key = cv2.waitKey(delay if playing else 50) & 0xFF
 
         # Play/Pause
@@ -306,9 +280,13 @@ def play_recording(filename):
             final_filename = new_filename
             already_saved = True
             in_replay = False
-
-            print("Duration overlay and trajectory image saved.")
-
+            
+            # Confirmation Overlay
+            cv2.putText(frame, "SAVED", (200, 200),
+                        cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 2)
+            cv2.imshow('Playback', frame)
+            cv2.waitKey(1000)
+            
             waiting_for_input = True
             return
         
@@ -326,12 +304,12 @@ def play_recording(filename):
             in_replay = False
             waiting_for_input = True
             
-            # Clear input queue
             with input_queue.mutex:
                 input_queue.queue.clear()
             
             return
         
+        # Exit
         elif key in [ord('q'), 27]:
             break
 
@@ -362,12 +340,10 @@ def play_recording(filename):
 
 
 def main_loop():
-    global recording, out, final_filename, last_record_time, waiting_for_input
-    global pwm_zeroed, last_pwm_send_time, auto_playback_filename
+    global recording, out, final_filename, last_record_time, waiting_for_input, pwm_zeroed, last_pwm_send_time, auto_playback_filename
 
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
     all_centroids = []
 
     while True:
@@ -384,7 +360,7 @@ def main_loop():
                 last_pwm_send_time = now
 
         if recording:
-            if now - last_record_time >= 1.0 / desired_fps:
+            if now - last_record_time >= 1.0 / DESIRED_FPS:
                 out.write(frame)
                 last_record_time = now
             cv2.putText(frame, "REC", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
@@ -407,7 +383,7 @@ def main_loop():
         # Start recording on new input
         if not recording and not input_queue.empty():
             input_queue.get()
-            out = cv2.VideoWriter(temp_filename, cv2.VideoWriter_fourcc(*'XVID'), desired_fps, (frame_width, frame_height))
+            out = cv2.VideoWriter(TEMP_FILENAME, cv2.VideoWriter_fourcc(*'XVID'), DESIRED_FPS, (frame_width, frame_height))
             recording = True
             last_record_time = time.time()
             waiting_for_input = False
@@ -443,12 +419,12 @@ def main_loop():
             if not recording:
                 print("Press Enter after inputting currents to start recording.")
             else:
-                print(f"Recording stopped.")
+                print(f"Recording stopped. Press 'q' or 'ESC' to play the recording.")
                 recording = False
                 if out:
                     out.release()
                     out = None
-                final_filename = temp_filename
+                final_filename = TEMP_FILENAME
 
                 send_zero_pwm()
                 pwm_zeroed = True
@@ -456,6 +432,19 @@ def main_loop():
 
     cleanup_and_exit()
 
+
+def cleanup_and_exit(signum=None, frame=None):
+    print("\nExiting and releasing resources...")
+    send_zero_pwm()
+    if cap.isOpened():
+        cap.release()
+    if out is not None:
+        out.release()
+    if ser is not None and ser.is_open:
+        ser.close()
+    cv2.destroyAllWindows()
+    sys.exit(0)
+    
 
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, cleanup_and_exit)
