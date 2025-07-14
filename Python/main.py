@@ -10,6 +10,7 @@ import serial
 import importlib
 import numpy as np
 from moduleDetection import detect_modules, draw_inter_module_distances
+import matplotlib
 
 # Setup
 PORT = 'COM3'
@@ -32,6 +33,7 @@ ser = None
 pwm_zeroed = False 
 last_pwm_send_time = 0
 auto_playback_filename = None
+colour_map = matplotlib.colormaps['tab10'].resampled(10)
 
 
 def run_seq(seq_name):
@@ -206,10 +208,17 @@ def play_recording(filename):
             for i in range(len(trajectories[0]) if len(trajectories) > 0 else 0):
                 points = []
                 for t in trajectories:
-                    if len(t) > i:  # Object exists in this frame
+                    if len(t) > i:
                         points.append(t[i])
+                if len(points) < 2:
+                    continue
+                if len(trajectories[0]) == 1:
+                    colour = (0, 0, 255)
+                else:
+                    c = colour_map(i)
+                    colour = (int(c[2]*255), int(c[1]*255), int(c[0]*255))
                 for j in range(1, len(points)):
-                    cv2.line(frame, points[j-1], points[j], (0, 0, 255), 2)
+                    cv2.line(frame, points[j-1], points[j], colour, 2)
 
         cv2.imshow('Playback', frame)
         key = cv2.waitKey(delay if playing else 50) & 0xFF
@@ -272,13 +281,25 @@ def play_recording(filename):
 
                 if ret:
                     traj_img = last_frame.copy()
-                    for i in range(len(trajectories[0])):
+                    num_centroids = len(trajectories[0])
+                    for i in range(num_centroids):
                         points = []
                         for t in trajectories:
                             if len(t) > i:
                                 points.append(t[i])
+                        if len(points) < 2:
+                            continue
+                        if num_centroids == 1:
+                            colour = (0, 0, 255)
+                        else:
+                            c = colour_map(i)
+                            colour = (
+                                int(c[2]*255),  # B
+                                int(c[1]*255),  # G
+                                int(c[0]*255)   # R                                
+                            ) 
                         for j in range(1, len(points)):
-                            cv2.line(traj_img, points[j-1], points[j], (0, 0, 255), 2)
+                            cv2.line(traj_img, points[j-1], points[j], colour, 2)
                     
                     img_filename = new_filename.rsplit('.', 1)[0] + "_trajectory.png"
                     cv2.imwrite(img_filename, traj_img)
@@ -337,17 +358,16 @@ def play_recording(filename):
                         f.write(f"Modules merged into one at frame {merge_frame_idx} (time = {merge_time_sec:.2f} s)\n")
                 else:
                     print("Modules did not merge into one during the recording.")
-
-            final_filename = new_filename
-            already_saved = True
-            in_replay = False
             
             # Confirmation Overlay
             cv2.putText(frame, "SAVED", (200, 200),
                         cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 2)
             cv2.imshow('Playback', frame)
-            cv2.waitKey(1000)
-            
+            cv2.waitKey(500)
+                    
+            final_filename = new_filename
+            already_saved = True
+            in_replay = False
             waiting_for_input = True
             return
         

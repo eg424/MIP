@@ -1,3 +1,4 @@
+# Change
 import serial
 import time
 import random
@@ -12,8 +13,8 @@ def main():
             print(ser.readline().decode().strip())
 
         for _ in range(20):
-            hx = random.choice([-10, 0, 10])
-            hy = random.choice([-10, 0, 10])
+            hx = random.randint(-50, 50) / 10
+            hy = random.randint(-5, 50) / 10
             cmd = f"0,{hx},0,{hy}\n"
             ser.write(cmd.encode())
             print(f"Sent: {cmd.strip()}")

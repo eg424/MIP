@@ -33,8 +33,8 @@ def detect_modules(frame):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
     # Manual fixed crop coordinates and size
-    y, x = 10, 200
-    h, w = 335, 340
+    y, x = 20, 185
+    h, w = 330, 330
     cropped = gray[y:y+h, x:x+w]
 
     # Further processing for detecting modules (white squares)
@@ -193,8 +193,8 @@ def process_image(img, filename=""):
 def process_frame(frame):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    y, x = 10, 200
-    h, w = 335, 340
+    y, x = 20, 185
+    h, w = 330, 330
     cropped = gray[y:y + h, x:x + w]
     
     cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
@@ -207,20 +207,38 @@ def process_frame(frame):
 
     module_boxes = []
     module_widths = []
+    aspect_ratios = []
 
     for cnt in contours:
         area = cv2.contourArea(cnt)
         if area < 500 or area > 20000:
             continue
+        
+        rect = cv2.minAreaRect(cnt)
+        box = cv2.boxPoints(rect).astype(int)
+        box += np.array([x, y])
 
-        x_cnt, y_cnt, w_cnt, h_cnt = cv2.boundingRect(cnt)
-        aspect_ratio = w_cnt / h_cnt
-        if aspect_ratio < 0.4 or aspect_ratio > 2.2:
+        width, height = rect[1]
+        if height == 0:
             continue
 
-        top_left = (x + x_cnt, y + y_cnt)
-        bottom_right = (x + x_cnt + w_cnt, y + y_cnt + h_cnt)
-        cv2.rectangle(frame, top_left, bottom_right, (0, 255, 0), 2)
+        aspect_ratio = min(width, height) / max(width, height)        
+        if aspect_ratio < 0.2 or aspect_ratio > 2.2:
+            continue
+        aspect_ratios.append(aspect_ratio)
+        
+        structure = "Unknown"
+        if 0.2 <= aspect_ratio <= 0.6:
+            structure = "Chain"
+            #print("Chain detected")
+        elif 0.95 <= aspect_ratio <= 1.05 and area > 3000:
+            structure = "Square"
+            #print("Square detected")
+        elif 0.9 <= aspect_ratio < 0.95 and area > 3000:
+            structure = "Ring"
+            #print("Ring detected")
+        
+        cv2.drawContours(frame, [box], 0, (0, 255, 0))
 
         M = cv2.moments(cnt)
         if M["m00"] != 0:
@@ -228,8 +246,14 @@ def process_frame(frame):
             cY = int(M["m01"] / M["m00"]) + y
             cv2.circle(frame, (cX, cY), 5, (0, 0, 255), -1)
 
-        module_boxes.append((top_left[0], top_left[1], bottom_right[0], bottom_right[1]))
-        module_widths.append(w_cnt)  # Track widths to compute scale
+        x_min, y_min = np.min(box, axis=0)
+        x_max, y_max = np.max(box, axis=0)
+
+        module_boxes.append((x_min, y_min, x_max, y_max))
+        module_widths.append(max(width, height))
+        
+    # for i, ar in enumerate(aspect_ratios, 1):
+    #     print(f"Module {i} aspect ratio: {ar:.2f}")
 
     # Estimate pixels per mm from one module
     if module_widths:
