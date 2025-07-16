@@ -114,22 +114,16 @@ def detect_modules(frame):
     return centroids, module_boxes, (x, y, w, h)
 
 
-def draw_im_dist(frame, module_boxes, pixels_per_mm):
-    import itertools
-    for (box1, box2) in itertools.combinations(module_boxes, 2):
-        x11, y11, x12, y12 = box1
-        x21, y21, x22, y22 = box2
-
-        dx = max(0, max(x21 - x12, x11 - x22))
-        dy = max(0, max(y21 - y12, y11 - y22))
+def draw_im_dist(frame, centroids, pixels_per_mm):
+    for (pt1, pt2) in itertools.combinations(centroids, 2):
+        dx = pt2[0] - pt1[0]
+        dy = pt2[1] - pt1[1]
         pixel_distance = np.hypot(dx, dy)
         mm_distance = pixel_distance / pixels_per_mm
 
-        center1 = ((x11 + x12) // 2, (y11 + y12) // 2)
-        center2 = ((x21 + x22) // 2, (y21 + y22) // 2)
+        mid_point = ((pt1[0] + pt2[0]) // 2, (pt1[1] + pt2[1]) // 2)
 
-        cv2.line(frame, center1, center2, (255, 255, 0), 1)
-        mid_point = ((center1[0] + center2[0]) // 2, (center1[1] + center2[1]) // 2)
+        cv2.line(frame, pt1, pt2, (255, 255, 0), 1)
         cv2.putText(frame, f"{mm_distance:.1f} mm", mid_point,
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
@@ -227,10 +221,10 @@ def process_frame(frame):
     module_boxes = []
     module_widths = []
     aspect_ratios = []
+    centroids = []
 
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        print(area)
         if area < 500 or area > 20000:
             continue
         
@@ -266,29 +260,24 @@ def process_frame(frame):
         if M["m00"] != 0:
             cX = int(M["m10"] / M["m00"]) + x
             cY = int(M["m01"] / M["m00"]) + y
+            centroids.append((cX, cY))
             cv2.circle(frame, (cX, cY), 5, (0, 0, 255), -1)
             cv2.putText(frame, structure, (cX, cY), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
+        # x_min, y_min = np.min(box, axis=0)
+        # x_max, y_max = np.max(box, axis=0)
 
-        x_min, y_min = np.min(box, axis=0)
-        x_max, y_max = np.max(box, axis=0)
-
-        module_boxes.append((x_min, y_min, x_max, y_max))
+        # module_boxes.append((x_min, y_min, x_max, y_max))
         module_widths.append(max(width, height))
         
     # for i, ar in enumerate(aspect_ratios, 1):
     #     print(f"Module {i} aspect ratio: {ar:.2f}")
 
     # Estimate pixels per mm from one module
-    if module_widths:
-        average_module_width_px = np.mean(module_widths)
-        real_world_width_mm = 3.0 * (32/25.7) # Readjust for calibration
-        pixels_per_mm = average_module_width_px / real_world_width_mm
-    else:
-        pixels_per_mm = 1.0
+    pixels_per_mm = 271/32 # Readjust for calibration
 
     # Draw all pairwise distances in mm
-    draw_im_dist(frame, module_boxes, pixels_per_mm)
+    draw_im_dist(frame, centroids, pixels_per_mm)
 
     return frame
 

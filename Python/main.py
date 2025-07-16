@@ -85,7 +85,7 @@ def serial_thread():
     time.sleep(0.5)
     # print(f"Opened serial port {PORT} at {BAUDRATE} baud.")
     
-    valid_sequences = {str(i) for i in range(1,10)}.union({f"seq{i}" for i in range(1,10)})
+    valid_sequences = {str(i) for i in range(1,10)}.union({f"seq{i}" for i in range(1,10)}, {"square"})
 
     while True:
         if waiting_for_input:
