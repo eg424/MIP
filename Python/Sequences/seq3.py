@@ -1,4 +1,3 @@
-# seq1, but faster
 import serial
 import time
 
@@ -15,13 +14,11 @@ def main():
 
         start_time = time.time()
 
-        while time.time() - start_time < 30:
-            # [0,1,0,0]
-            ser.write(b'0,0.8,0,0\n')
-            print("Sent: 0,1,0,0")
+        while time.time() - start_time < 15:
+            ser.write(b'0,1.2,0,0\n')
+            print("Sent: 0,1.2,0,0")
             time.sleep(0.3)
 
-            # [0,0,0,2.5]
             ser.write(b'0,0,0,2.5\n')
             print("Sent: 0,0,0,2.5")
             time.sleep(0.3)

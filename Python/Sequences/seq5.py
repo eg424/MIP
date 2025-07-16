@@ -1,27 +1,32 @@
-# Change
 import serial
 import time
-import random
 
 PORT = 'COM3'
 BAUDRATE = 9600
 
 def main():
     with serial.Serial(PORT, BAUDRATE, timeout=2) as ser:
-        time.sleep(1)
+        time.sleep(1)  # Wait for Arduino to reset
+        
+        # Clear any initial data
         while ser.in_waiting:
             print(ser.readline().decode().strip())
 
-        for _ in range(20):
-            hx = random.randint(-50, 50) / 10
-            hy = random.randint(-5, 50) / 10
-            cmd = f"0,{hx},0,{hy}\n"
-            ser.write(cmd.encode())
-            print(f"Sent: {cmd.strip()}")
+        start_time = time.time()
+
+        while time.time() - start_time < 15:
+            ser.write(b'0,0.6,0,0\n')
+            print("Sent: 0,0.6,0,0")
             time.sleep(0.3)
 
-        ser.write(b'0,0,0,0\n')
-        print("Sent: 0,0,0,0")
+            ser.write(b'0,0,0,1\n')
+            print("Sent: 0,0,0,1")
+            time.sleep(0.5)
+
+            # Reset to 0,0,0,0
+            ser.write(b'0,0,0,0\n')
+            print("Sent: 0,0,0,0")
+            time.sleep(0.3)
 
 if __name__ == "__main__":
     main()

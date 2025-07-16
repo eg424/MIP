@@ -31,54 +31,74 @@ single_image_path = r'C:\Users\erikg\MIP\Python\Images\4mod2ch2liq.png'  # Chang
 
 def detect_modules(frame):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    
-    # Manual fixed crop coordinates and size
+
     y, x = 20, 185
     h, w = 330, 330
-    cropped = gray[y:y+h, x:x+w]
+    cropped = gray[y:y + h, x:x + w]
+    
+    cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
 
-    # Further processing for detecting modules (white squares)
     blurred_cropped = cv2.medianBlur(cropped, 5)
     _, th_cropped = cv2.threshold(blurred_cropped, 82, 255, cv2.THRESH_BINARY)
-
-    # Morphological closing to clean up
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
     closed = cv2.morphologyEx(th_cropped, cv2.MORPH_CLOSE, kernel)
-
-    # Find contours in cropped processed image
     contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    centroids = []
-    areas = []
-    bounding_boxes = []
     module_boxes = []
+    centroids = []
     module_widths = []
+    aspect_ratios = []
 
     for cnt in contours:
         area = cv2.contourArea(cnt)
         if area < 500 or area > 20000:
             continue
-
-        x_cnt, y_cnt, w_cnt, h_cnt = cv2.boundingRect(cnt)
-        bounding_boxes.append((x_cnt, y_cnt, w_cnt, h_cnt))
-        aspect_ratio = w_cnt / float(h_cnt)
-
-        if aspect_ratio < 0.4 or aspect_ratio > 2.2:
-            #print(f"Rejected contour {i} due to aspect ratio: {aspect_ratio:.2f}")
-            continue
         
-        top_left = (x + x_cnt, y + y_cnt)
-        bottom_right = (x + x_cnt + w_cnt, y + y_cnt + h_cnt)
+        rect = cv2.minAreaRect(cnt)
+        box = cv2.boxPoints(rect).astype(int)
+        box += np.array([x, y])
+
+        width, height = rect[1]
+        if height == 0:
+            continue
+
+        aspect_ratio = min(width, height) / max(width, height)        
+        if aspect_ratio < 0.2 or aspect_ratio > 2.2:
+            continue
+        aspect_ratios.append(aspect_ratio)
+        
+        structure = "Unknown"
+        if 0.2 <= aspect_ratio <= 0.6:
+            structure = "Chain"
+            #print("Chain detected")
+        elif 0.9 <= aspect_ratio <= 1.1:
+            structure = "Square"
+            #print("Square detected")
+            if area < 1000:
+                structure = "Module"
+        elif 0.9 <= aspect_ratio < 0.95 and area > 3000:
+            structure = "Ring"
+            #print("Ring detected")
+        
+        cv2.drawContours(frame, [box], 0, (0, 255, 0))
 
         M = cv2.moments(cnt)
         if M["m00"] != 0:
-            cX = int(M["m10"] / M["m00"])
-            cY = int(M["m01"] / M["m00"])
+            cX = int(M["m10"] / M["m00"]) + x
+            cY = int(M["m01"] / M["m00"]) + y
             centroids.append((cX, cY))
-            areas.append(area)
-            
-        module_boxes.append((top_left[0], top_left[1], bottom_right[0], bottom_right[1]))
-        module_widths.append(w_cnt)  # Track widths to compute scale
+            cv2.circle(frame, (cX, cY), 5, (0, 0, 255), -1)
+            cv2.putText(frame, structure, (cX, cY), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+
+
+        x_min, y_min = np.min(box, axis=0)
+        x_max, y_max = np.max(box, axis=0)
+
+        module_boxes.append((x_min, y_min, x_max, y_max))
+        module_widths.append(max(width, height))
+        
+    # for i, ar in enumerate(aspect_ratios, 1):
+    #     print(f"Module {i} aspect ratio: {ar:.2f}")
 
     # Estimate pixels per mm from one module
     if module_widths:
@@ -89,13 +109,12 @@ def detect_modules(frame):
         pixels_per_mm = 1.0
 
     # Draw all pairwise distances in mm
-    draw_inter_module_distances(frame, module_boxes, pixels_per_mm)
+    draw_im_dist(frame, module_boxes, pixels_per_mm)
 
-    # Return centroids, bounding boxes relative to cropped image, and fixed crop offset for original image reference
-    return centroids, bounding_boxes, (x, y, w, h)
+    return centroids, module_boxes, (x, y, w, h)
 
 
-def draw_inter_module_distances(frame, module_boxes, pixels_per_mm):
+def draw_im_dist(frame, module_boxes, pixels_per_mm):
     import itertools
     for (box1, box2) in itertools.combinations(module_boxes, 2):
         x11, y11, x12, y12 = box1
@@ -211,6 +230,7 @@ def process_frame(frame):
 
     for cnt in contours:
         area = cv2.contourArea(cnt)
+        print(area)
         if area < 500 or area > 20000:
             continue
         
@@ -231,8 +251,10 @@ def process_frame(frame):
         if 0.2 <= aspect_ratio <= 0.6:
             structure = "Chain"
             #print("Chain detected")
-        elif 0.95 <= aspect_ratio <= 1.05 and area > 3000:
+        elif 0.9 <= aspect_ratio <= 1.1:
             structure = "Square"
+            if area < 1000:
+                structure = "Module"
             #print("Square detected")
         elif 0.9 <= aspect_ratio < 0.95 and area > 3000:
             structure = "Ring"
@@ -245,6 +267,8 @@ def process_frame(frame):
             cX = int(M["m10"] / M["m00"]) + x
             cY = int(M["m01"] / M["m00"]) + y
             cv2.circle(frame, (cX, cY), 5, (0, 0, 255), -1)
+            cv2.putText(frame, structure, (cX, cY), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+
 
         x_min, y_min = np.min(box, axis=0)
         x_max, y_max = np.max(box, axis=0)
@@ -264,22 +288,7 @@ def process_frame(frame):
         pixels_per_mm = 1.0
 
     # Draw all pairwise distances in mm
-    for (box1, box2) in itertools.combinations(module_boxes, 2):
-        x11, y11, x12, y12 = box1
-        x21, y21, x22, y22 = box2
-
-        dx = max(0, max(x21 - x12, x11 - x22))
-        dy = max(0, max(y21 - y12, y11 - y22))
-        pixel_distance = np.hypot(dx, dy)
-        mm_distance = pixel_distance / pixels_per_mm
-
-        center1 = ((x11 + x12) // 2, (y11 + y12) // 2)
-        center2 = ((x21 + x22) // 2, (y21 + y22) // 2)
-
-        cv2.line(frame, center1, center2, (255, 255, 0), 1)
-        mid_point = ((center1[0] + center2[0]) // 2, (center1[1] + center2[1]) // 2)
-        cv2.putText(frame, f"{mm_distance:.1f} mm", mid_point,
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    draw_im_dist(frame, module_boxes, pixels_per_mm)
 
     return frame
 

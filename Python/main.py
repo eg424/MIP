@@ -9,7 +9,7 @@ import queue
 import serial
 import importlib
 import numpy as np
-from moduleDetection import detect_modules, draw_inter_module_distances
+from moduleDetection import detect_modules, draw_im_dist
 import matplotlib
 
 # Setup
@@ -173,10 +173,6 @@ def play_recording(filename):
             cv2.setTrackbarPos('Position', 'Playback', current_frame)
             centroids, bounding_boxes, crop_rect = detect_modules(frame)
             
-            if crop_rect is not None:
-                crop_x, crop_y, _, _ = crop_rect
-                centroids = [(cX + crop_x, cY + crop_y) for (cX, cY) in centroids]
-
             # Save first frame and initial centroids for later check
             if initial_frame is None:
                 initial_frame = frame.copy()
@@ -312,7 +308,7 @@ def play_recording(filename):
                 init_distance_img = initial_frame.copy()
 
                 # Re-detect modules in the initial frame to get boxes and pixels_per_mm
-                _, _, crop_rect = detect_modules(initial_frame)
+                #_, _, crop_rect = detect_modules(initial_frame)
                 centroids_rel, boxes_rel, _ = detect_modules(initial_frame)
 
                 if crop_rect is not None:
@@ -333,7 +329,7 @@ def play_recording(filename):
                 else:
                     pixels_per_mm = 1.0
 
-                draw_inter_module_distances(init_distance_img, module_boxes, pixels_per_mm)
+                draw_im_dist(init_distance_img, module_boxes, pixels_per_mm)
 
                 # Add time overlay "0 s"
                 cv2.putText(init_distance_img, "(0 s)", (10, init_distance_img.shape[0] - 20),
@@ -446,15 +442,7 @@ def main_loop():
 
         if waiting_for_input:
             centroids, bounding_boxes, crop_rect = detect_modules(frame)
-            if crop_rect is not None:
-                crop_x, crop_y, crop_w, crop_h = crop_rect
-                # Draw bounding boxes
-                for (x, y, w, h) in bounding_boxes:
-                    cv2.rectangle(frame, (x + crop_x, y + crop_y), (x + crop_x + w, y + crop_y + h), (0, 255, 0), 1)
-                for (cX, cY) in centroids:
-                    cv2.circle(frame, (cX + crop_x, cY + crop_y), 5, (0, 0, 255), -1)
-                cv2.rectangle(frame, (crop_x, crop_y), (crop_x + crop_w, crop_y + crop_h), (255, 0, 0), 2)
-            
+        
         # Display frame
         cv2.imshow('USB Camera Feed', frame)
         key = cv2.waitKey(1) & 0xFF

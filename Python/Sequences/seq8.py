@@ -14,13 +14,13 @@ def main():
 
         start_time = time.time()
 
-        while time.time() - start_time < 5:
+        while time.time() - start_time < 15:
             ser.write(b'0,1,0,0\n')
-            print("Sent: 0,0.8,0,0")
+            print("Sent: 0,1,0,0")
             time.sleep(0.2)
 
             ser.write(b'0,0,0,2.5\n')
-            print("Sent: 0,0,0,1.5")
+            print("Sent: 0,0,0,2.5")
             time.sleep(0.2)
 
             # Reset
