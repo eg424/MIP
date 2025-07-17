@@ -329,7 +329,7 @@ def play_recording(filename):
                 else:
                     pixels_per_mm = 1.0
 
-                draw_im_dist(init_distance_img, module_boxes, pixels_per_mm)
+                draw_im_dist(init_distance_img, centroids, pixels_per_mm)
 
                 # Add time overlay "0 s"
                 cv2.putText(init_distance_img, "(0 s)", (10, init_distance_img.shape[0] - 20),

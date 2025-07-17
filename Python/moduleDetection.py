@@ -90,26 +90,15 @@ def detect_modules(frame):
             cv2.circle(frame, (cX, cY), 5, (0, 0, 255), -1)
             cv2.putText(frame, structure, (cX, cY), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
-
-        x_min, y_min = np.min(box, axis=0)
-        x_max, y_max = np.max(box, axis=0)
-
-        module_boxes.append((x_min, y_min, x_max, y_max))
-        module_widths.append(max(width, height))
         
     # for i, ar in enumerate(aspect_ratios, 1):
     #     print(f"Module {i} aspect ratio: {ar:.2f}")
 
     # Estimate pixels per mm from one module
-    if module_widths:
-        average_module_width_px = np.mean(module_widths)
-        real_world_width_mm = 3.0 * (32/25.7) # Readjust for calibration
-        pixels_per_mm = average_module_width_px / real_world_width_mm
-    else:
-        pixels_per_mm = 1.0
+    pixels_per_mm = 271/32
 
     # Draw all pairwise distances in mm
-    draw_im_dist(frame, module_boxes, pixels_per_mm)
+    draw_im_dist(frame, centroids, pixels_per_mm)
 
     return centroids, module_boxes, (x, y, w, h)
 
@@ -264,12 +253,6 @@ def process_frame(frame):
             cv2.circle(frame, (cX, cY), 5, (0, 0, 255), -1)
             cv2.putText(frame, structure, (cX, cY), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
-        # x_min, y_min = np.min(box, axis=0)
-        # x_max, y_max = np.max(box, axis=0)
-
-        # module_boxes.append((x_min, y_min, x_max, y_max))
-        module_widths.append(max(width, height))
-        
     # for i, ar in enumerate(aspect_ratios, 1):
     #     print(f"Module {i} aspect ratio: {ar:.2f}")
 
