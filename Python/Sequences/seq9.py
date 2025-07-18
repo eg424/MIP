@@ -14,22 +14,19 @@ def main():
 
         start_time = time.time()
 
-        while time.time() - start_time < 30:
-            ser.write(b'0,4,0,0\n')
-            print("Sent: 0,4,0,0")
-            time.sleep(0.5)
-            
-            ser.write(b'0,0,0,0\n')
-            print("Sent: 0,0,0,0")
-            time.sleep(0.5)
+        while time.time() - start_time < 5:
+            ser.write(b'0,0.4,0,0\n')
+            print("Sent: 0,0.4,0,0")
+            time.sleep(0.2)
 
-            ser.write(b'0,0,0,10\n')
-            print("Sent: 0,0,0,10")
-            time.sleep(0.5)
-            
+            ser.write(b'0,0,0,2\n')
+            print("Sent: 0,0,0,2")
+            time.sleep(0.3)
+
+            # Reset to 0,0,0,0
             ser.write(b'0,0,0,0\n')
             print("Sent: 0,0,0,0")
-            time.sleep(0.5)
+            time.sleep(0.3)
 
 if __name__ == "__main__":
     main()
