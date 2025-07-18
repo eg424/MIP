@@ -85,7 +85,9 @@ def serial_thread():
     time.sleep(0.5)
     # print(f"Opened serial port {PORT} at {BAUDRATE} baud.")
     
-    valid_sequences = {str(i) for i in range(1,10)}.union({f"seq{i}" for i in range(1,10)}, {"square"})
+    named_sequences = {"square", "M1_straight"}
+    
+    valid_sequences = {str(i) for i in range(1,10)}.union({f"seq{i}" for i in range(1,10)}, named_sequences)
 
     while True:
         if waiting_for_input:
@@ -112,7 +114,11 @@ def serial_thread():
                 continue
 
             if choice in valid_sequences:
-                seq_name = choice if choice.startswith("seq") else f"seq{choice}"
+                if choice.isdigit():
+                    seq_name = f"seq{choice}"
+                else:
+                    seq_name = choice
+
                 current_input_string = seq_name
                 input_queue.put(seq_name)
                 
