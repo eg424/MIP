@@ -72,8 +72,6 @@ void setup() {
   digitalWrite(en_L_MY, HIGH);
 
   Serial.begin(9600);
-  Serial.println("Enter currents for MX, HX,  MY, HY and separated by commas (e.g., 3.0, 1.5, -2.0, 0.5):");
-
 }
 
 void loop() {

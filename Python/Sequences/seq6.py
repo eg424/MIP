@@ -1,10 +1,11 @@
 import serial
 import time
+import threading
 
 PORT = 'COM3'
 BAUDRATE = 9600
 
-def main():
+def main(stop_event: threading.Event = None):
     with serial.Serial(PORT, BAUDRATE, timeout=2) as ser:
         time.sleep(1)  # Wait for Arduino to reset
         
@@ -15,21 +16,28 @@ def main():
         start_time = time.time()
 
         while time.time() - start_time < 30:
+            if stop_event and stop_event.is_set():
+                print("Sequence interrupted by user.")
+                break
+
             ser.write(b'0,4,0,0\n')
             print("Sent: 0,4,0,0")
             time.sleep(0.5)
-            
+            if stop_event and stop_event.is_set():
+                break
+
             ser.write(b'0,0,0,0\n')
             print("Sent: 0,0,0,0")
             time.sleep(0.5)
+            if stop_event and stop_event.is_set():
+                break
 
             ser.write(b'0,0,0,10\n')
             print("Sent: 0,0,0,10")
             time.sleep(0.5)
-            
+            if stop_event and stop_event.is_set():
+                break
+
             ser.write(b'0,0,0,0\n')
             print("Sent: 0,0,0,0")
             time.sleep(0.5)
-
-if __name__ == "__main__":
-    main()

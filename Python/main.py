@@ -34,32 +34,44 @@ pwm_zeroed = False
 last_pwm_send_time = 0
 auto_playback_filename = None
 colour_map = matplotlib.colormaps['tab10'].resampled(10)
+sequence_stop_event = threading.Event()
 
 
 def run_seq(seq_name):
-    global recording, out, final_filename, waiting_for_input, auto_playback_filename
-    
+    global recording, out, final_filename, waiting_for_input, auto_playback_filename, sequence_stop_event
+
     seq_path = f"Sequences.{seq_name}"
 
     try:
         module = importlib.import_module(seq_path)
         print(f"Running sequence: {seq_name}")
-        module.main()
-        print(f"Sequence '{seq_name}' finished running.")
         
+        # If the module supports stopping, pass the stop event
+        if hasattr(module, "main"):
+            if "stop_event" in module.main.__code__.co_varnames:
+                module.main(stop_event=sequence_stop_event)
+            else:
+                module.main()
+        else:
+            print(f"'{seq_name}' does not have a 'main()' function.")
+            return
+
+        if not sequence_stop_event.is_set():
+            print(f"Sequence '{seq_name}' finished running.")
+
         if recording:
             print("Stopping recording after sequence completion.")
             stop_recording()
             final_filename = TEMP_FILENAME
             auto_playback_filename = TEMP_FILENAME
-            
-            # After stopping, start playback interaction automatically
             waiting_for_input = False
 
     except ModuleNotFoundError:
         print(f"Sequence '{seq_name}' not found.")
-    except AttributeError:
-        print(f"'{seq_name}' does not have a 'main()' function.")
+    except Exception as e:
+        print(f"Error running sequence '{seq_name}': {e}")
+        
+    sequence_stop_event.clear()
 
 
 def stop_recording():
@@ -71,6 +83,8 @@ def stop_recording():
     pwm_zeroed = True
     last_pwm_send_time = 0
     print("Recording stopped. Press 'Q' or 'ESC' to play the recording.")
+    
+    sequence_stop_event.clear()
 
 
 def send_zero_pwm():
@@ -92,9 +106,9 @@ def serial_thread():
     while True:
         if waiting_for_input:
             print("\nInput sequence to run:")
-            print("  - Enter sequence number (e.g. 1) or name (e.g. seq1)")
-            print("  - Or enter currents as comma-separated values (e.g. 3.0, 1.5, -2.0, 0.5) for manual input")
-            
+            print("  - Enter a sequence number (e.g., 1) or a name (e.g., seq1) for a predefined sequence")
+            print("  - Or enter currents (e.g., 3.0, 1.5, -2.0, 0.5) for manual control")
+
             choice = input("Enter desired sequence: ").strip()
             
             # Detect manual PWM input (comma-separated floats)
@@ -124,13 +138,13 @@ def serial_thread():
                 
                 if ser.is_open:
                     ser.close()
-                print("Recording started. Will stop automatically when sequence ends.")    
+                print("Recording started. It will stop automatically when the sequence ends, or press 'R' to stop manually.")
                 run_seq(seq_name)
                 ser = serial.Serial(PORT, BAUDRATE, timeout=2)
                 waiting_for_input = False
 
             else:
-                print("Invalid choice. Please enter a valid sequence number/name or manual currents.")
+                print("Invalid choice. Please enter a valid sequence or string.")
         else:
             time.sleep(0.1)
  
@@ -385,7 +399,7 @@ def play_recording(filename):
             final_filename = None
             already_saved = True
             in_replay = False
-            waiting_for_input = True
+            waiting_for_input = False
             
             with input_queue.mutex:
                 input_queue.queue.clear()
@@ -418,6 +432,7 @@ def play_recording(filename):
                 break
 
     waiting_for_input = True
+    sequence_stop_event.clear()
 
 
 def main_loop():
@@ -491,6 +506,8 @@ def main_loop():
         elif key == ord('r'):
             if not recording:
                 print("Press Enter after inputting currents to start recording.")
+                recording = True
+                last_record_time = time.time()
             else:
                 print(f"Recording stopped. Press 'q' or 'ESC' to play the recording.")
                 recording = False
@@ -499,9 +516,14 @@ def main_loop():
                     out = None
                 final_filename = TEMP_FILENAME
 
+                sequence_stop_event.set()
                 send_zero_pwm()
                 pwm_zeroed = True
                 last_pwm_send_time = 0
+                auto_playback_filename = TEMP_FILENAME
+                
+                waiting_for_input = True
+                input_queue.queue.clear() 
 
     cleanup_and_exit()
 
@@ -520,7 +542,6 @@ def cleanup_and_exit(signum=None, frame=None):
     
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGINT, cleanup_and_exit)
     signal.signal(signal.SIGTERM, cleanup_and_exit)
     thread = threading.Thread(target=serial_thread, daemon=True)
     thread.start()
