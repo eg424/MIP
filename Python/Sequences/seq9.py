@@ -14,7 +14,7 @@ def main():
 
         start_time = time.time()
 
-        while time.time() - start_time < 5:
+        while time.time() - start_time < 15:
             ser.write(b'0,0.4,0,0\n')
             print("Sent: 0,0.4,0,0")
             time.sleep(0.2)

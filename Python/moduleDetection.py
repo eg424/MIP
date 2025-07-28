@@ -74,7 +74,7 @@ def detect_modules(frame):
         elif 0.9 <= aspect_ratio <= 1.1:
             structure = "Square"
             #print("Square detected")
-            if area < 1000:
+            if area < 1200:
                 structure = "Module"
         elif 0.9 <= aspect_ratio < 0.95 and area > 3000:
             structure = "Ring"
@@ -87,7 +87,7 @@ def detect_modules(frame):
             cX = int(M["m10"] / M["m00"]) + x
             cY = int(M["m01"] / M["m00"]) + y
             centroids.append((cX, cY))
-            cv2.circle(frame, (cX, cY), 5, (0, 0, 255), -1)
+            cv2.circle(frame, (cX, cY), 2, (0, 0, 255), -1)
             cv2.putText(frame, structure, (cX, cY), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
         

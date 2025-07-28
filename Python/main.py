@@ -85,7 +85,7 @@ def serial_thread():
     time.sleep(0.5)
     # print(f"Opened serial port {PORT} at {BAUDRATE} baud.")
     
-    named_sequences = {"square", "M1_straight"}
+    named_sequences = {"square", "M1_straight", "M1M2_straight"}
     
     valid_sequences = {str(i) for i in range(1,10)}.union({f"seq{i}" for i in range(1,10)}, named_sequences)
 
