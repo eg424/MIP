@@ -9,7 +9,7 @@ import queue
 import serial
 import importlib
 import numpy as np
-from moduleDetection import detect_modules, draw_im_dist
+from moduleDetection import detect_modules, draw_im_dist, process_frame
 import matplotlib
 
 # Setup
@@ -38,8 +38,9 @@ sequence_stop_event = threading.Event()
 
 
 def run_seq(seq_name):
-    global recording, out, final_filename, waiting_for_input, auto_playback_filename, sequence_stop_event
-
+    global recording, out, final_filename, waiting_for_input
+    global auto_playback_filename, sequence_stop_event
+    
     seq_path = f"Sequences.{seq_name}"
 
     try:
@@ -58,7 +59,7 @@ def run_seq(seq_name):
 
         if not sequence_stop_event.is_set():
             print(f"Sequence '{seq_name}' finished running.")
-
+        
         if recording:
             print("Stopping recording after sequence completion.")
             stop_recording()
@@ -68,47 +69,44 @@ def run_seq(seq_name):
 
     except ModuleNotFoundError:
         print(f"Sequence '{seq_name}' not found.")
-    except Exception as e:
-        print(f"Error running sequence '{seq_name}': {e}")
-        
+    except AttributeError:
+        print(f"'{seq_name}' does not have a 'main()' function.")
+    
     sequence_stop_event.clear()
 
 
 def stop_recording():
-    global recording, out, pwm_zeroed, last_pwm_send_time
+    global recording, out
     recording = False
     if out:
         out.release()
     send_zero_pwm()
-    pwm_zeroed = True
-    last_pwm_send_time = 0
     print("Recording stopped. Press 'Q' or 'ESC' to play the recording.")
-    
-    sequence_stop_event.clear()
 
 
 def send_zero_pwm():
-    global ser
+    global ser, pwm_zeroed
     if ser and ser.is_open:
         ser.write("0,0,0,0\n".encode())
+        pwm_zeroed = True
 
 
 def serial_thread():
-    global ser, current_input_string, waiting_for_input, pwm_zeroed
+    global ser, current_input_string, waiting_for_input
     ser = serial.Serial(PORT, BAUDRATE, timeout=2)
     time.sleep(0.5)
     # print(f"Opened serial port {PORT} at {BAUDRATE} baud.")
     
-    named_sequences = {"square", "M1_straight", "M1M2_straight"}
+    named_sequences = {"square", "M1_straight", "M1M2_straight", "closed"}
     
-    valid_sequences = {str(i) for i in range(1,10)}.union({f"seq{i}" for i in range(1,10)}, named_sequences)
+    valid_sequences = {str(i) for i in range(1,15)}.union({f"seq{i}" for i in range(1,15)}, named_sequences)
 
     while True:
         if waiting_for_input:
             print("\nInput sequence to run:")
-            print("  - Enter a sequence number (e.g., 1) or a name (e.g., seq1) for a predefined sequence")
-            print("  - Or enter currents (e.g., 3.0, 1.5, -2.0, 0.5) for manual control")
-
+            print("  - Enter sequence number (e.g. 1) or name (e.g. seq1)")
+            print("  - Or enter currents as comma-separated values (e.g. 3.0, 1.5, -2.0, 0.5) for manual input")
+            
             choice = input("Enter desired sequence: ").strip()
             
             # Detect manual PWM input (comma-separated floats)
@@ -121,7 +119,6 @@ def serial_thread():
                     if ser.is_open:
                         time.sleep(0.5)
                         ser.write((choice + '\n').encode())
-                        pwm_zeroed = False
                     print("Recording started. Press 'R' to stop recording.")
                 except ValueError:
                     print("Invalid currents input. Please enter comma-separated floats.")
@@ -138,13 +135,13 @@ def serial_thread():
                 
                 if ser.is_open:
                     ser.close()
-                print("Recording started. It will stop automatically when the sequence ends, or press 'R' to stop manually.")
+                print("Recording started. Will stop automatically when sequence ends.")    
                 run_seq(seq_name)
                 ser = serial.Serial(PORT, BAUDRATE, timeout=2)
                 waiting_for_input = False
 
             else:
-                print("Invalid choice. Please enter a valid sequence or string.")
+                print("Invalid choice. Please enter a valid sequence number/name or manual currents.")
         else:
             time.sleep(0.1)
  
@@ -191,7 +188,7 @@ def play_recording(filename):
             
             current_frame = int(cap_play.get(cv2.CAP_PROP_POS_FRAMES))
             cv2.setTrackbarPos('Position', 'Playback', current_frame)
-            centroids, bounding_boxes, crop_rect = detect_modules(frame)
+            centroids, _, _ = detect_modules(frame)
             
             # Save first frame and initial centroids for later check
             if initial_frame is None:
@@ -325,40 +322,15 @@ def play_recording(filename):
 
             # If initially separated, save initial separation image & detect merge time
             if initial_frame is not None and len(initial_centroids) > 1:
-                init_distance_img = initial_frame.copy()
-
-                # Re-detect modules in the initial frame to get boxes and pixels_per_mm
-                #_, _, crop_rect = detect_modules(initial_frame)
-                centroids_rel, boxes_rel, _ = detect_modules(initial_frame)
-
-                if crop_rect is not None:
-                    crop_x, crop_y, _, _ = crop_rect
-                    module_boxes = [
-                        (x + crop_x, y + crop_y, x + crop_x + w, y + crop_y + h)
-                        for (x, y, w, h) in boxes_rel
-                    ]
-                else:
-                    module_boxes = []
-
-                # Estimate pixels_per_mm again from module widths
-                module_widths = [w for (x, y, w, h) in boxes_rel]
-                if module_widths:
-                    avg_width = np.mean(module_widths)
-                    real_width_mm = 3.0 * (32 / 25.7)  # calibration
-                    pixels_per_mm = avg_width / real_width_mm
-                else:
-                    pixels_per_mm = 1.0
-
-                draw_im_dist(init_distance_img, centroids, pixels_per_mm)
-
-                # Add time overlay "0 s"
-                cv2.putText(init_distance_img, "(0 s)", (10, init_distance_img.shape[0] - 20),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
-
-                init_distance_filename = new_filename.rsplit('.', 1)[0] + "_initial_distance.png"
-                cv2.imwrite(init_distance_filename, init_distance_img)
-                print(f"Initial distance image saved as '{init_distance_filename}'")
-
+                init_dist_img = initial_frame.copy()
+                
+                # Save separation image
+                process_frame(init_dist_img)
+                cv2.putText(init_dist_img, "(0 s)", (10, init_dist_img.shape[0] - 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2) # Overlay (0 s)
+                init_dist_filename = new_filename.rsplit('.', 1)[0] + "_initial_distance.png"
+                cv2.imwrite(init_dist_filename, init_dist_img)
+                print(f"Initial distance image saved as '{init_dist_filename}'")
 
                 # Detect merge frame - first frame where only 1 centroid is detected
                 merge_frame_idx = None
@@ -399,7 +371,7 @@ def play_recording(filename):
             final_filename = None
             already_saved = True
             in_replay = False
-            waiting_for_input = False
+            waiting_for_input = True
             
             with input_queue.mutex:
                 input_queue.queue.clear()
@@ -432,15 +404,14 @@ def play_recording(filename):
                 break
 
     waiting_for_input = True
-    sequence_stop_event.clear()
 
 
 def main_loop():
-    global recording, out, final_filename, last_record_time, waiting_for_input, pwm_zeroed, last_pwm_send_time, auto_playback_filename
+    global recording, out, final_filename, last_record_time, waiting_for_input
+    global pwm_zeroed, last_pwm_send_time, auto_playback_filename
 
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    all_centroids = []
 
     while True:
         ret, frame = cap.read()
@@ -450,7 +421,7 @@ def main_loop():
         now = time.time()
 
         # Periodic zero PWM if in zero-mode
-        if pwm_zeroed and ser and ser.is_open:
+        if ser and ser.is_open:
             if now - last_pwm_send_time > 0.5:
                 send_zero_pwm()
                 last_pwm_send_time = now
@@ -462,7 +433,7 @@ def main_loop():
             cv2.putText(frame, "REC", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
         if waiting_for_input:
-            centroids, bounding_boxes, crop_rect = detect_modules(frame)
+            frame = process_frame(frame)
         
         # Display frame
         cv2.imshow('USB Camera Feed', frame)
@@ -506,8 +477,6 @@ def main_loop():
         elif key == ord('r'):
             if not recording:
                 print("Press Enter after inputting currents to start recording.")
-                recording = True
-                last_record_time = time.time()
             else:
                 print(f"Recording stopped. Press 'q' or 'ESC' to play the recording.")
                 recording = False
@@ -516,14 +485,7 @@ def main_loop():
                     out = None
                 final_filename = TEMP_FILENAME
 
-                sequence_stop_event.set()
                 send_zero_pwm()
-                pwm_zeroed = True
-                last_pwm_send_time = 0
-                auto_playback_filename = TEMP_FILENAME
-                
-                waiting_for_input = True
-                input_queue.queue.clear() 
 
     cleanup_and_exit()
 
