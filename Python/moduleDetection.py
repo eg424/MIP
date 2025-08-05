@@ -230,33 +230,34 @@ def draw_walls(frame):
     
 
 def show_nav_workspace(frame, red_contours, module_boxes, idx1=5, idx2=6):
-
     # Sort red contours by area (largest to smallest)
     sorted_contours = sorted(red_contours, key=cv2.contourArea, reverse=True)
     
-    # Skip if no red contours
     if len(sorted_contours) < 3:
-        return frame
-    
-    outer_contour = sorted_contours[0] # Outer walls
-    inner_contour = sorted_contours[1] # Workspace
-    rhombus_contour = sorted_contours[2]  # Rhombus
-    
-    # Create blank mask
-    mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+        return np.zeros(frame.shape[:2], dtype=np.uint8)
 
-    # Draw outer walls, workspace, rhombus, and modules
+    outer_contour = sorted_contours[0]  # Outer walls
+    inner_contour = sorted_contours[1]  # Workspace
+    rhombus_contour = sorted_contours[2]  # Rhombus
+
+    # === 1. Create binary mask (for A* etc.) ===
+    mask = np.zeros(frame.shape[:2], dtype=np.uint8)
     cv2.drawContours(mask, [outer_contour], -1, 255, thickness=cv2.FILLED)
     cv2.drawContours(mask, [inner_contour], -1, 0, thickness=cv2.FILLED)
     cv2.drawContours(mask, [rhombus_contour], -1, 255, thickness=cv2.FILLED)
-    for box in module_boxes:
-        cv2.drawContours(mask, [box], -1, 255, thickness=cv2.FILLED)
 
-    # Convert mask to BGR for display
-    mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-    cv2.imshow("Live Workspace Mask", mask_bgr)
+    # === 2. Create visualization image ===
+    vis = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+
+    # === 3. Draw module boxes in color ===
+    for box in module_boxes:
+        cv2.drawContours(vis, [box], -1, (0, 255, 255), 2)  # Yellow outline
+        cv2.putText(vis, "Module", tuple(box[0]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+
+    cv2.imshow("Live Workspace Mask", vis)
 
     return mask
+
 
 
 def process_frame(frame):

@@ -34,21 +34,9 @@ def heuristic(a, b):
 
 
 def astar(grid, start, goal):
-    """
-    A* pathfinding algorithm on a 2D grid.
-
-    Parameters:
-    - grid: 2D numpy array representing occupancy grid (0=free, 1=obstacle)
-    - start: tuple (row, col) start position
-    - goal: tuple (row, col) goal position
-
-    Returns:
-    - path: list of (row, col) tuples from start to goal, or None if no path
-    """
-    h, w = grid.shape  # grid height and width
+    h, w = grid.shape
 
     # Open set implemented as a priority queue (heapq)
-    # Elements: (f_score, g_score, current_node, path_so_far)
     open_set = []
     heapq.heappush(open_set, (0 + heuristic(start, goal), 0, start, [start]))
 
@@ -95,6 +83,15 @@ def process_frame(frame):
     return frame
 
 
+def inflate_obstacles(occupancy_grid):
+    inflation_cells = int(np.ceil(1.5)) # Module radius
+    # Create a circular kernel for dilation
+    kernel_size = inflation_cells * 2
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    inflated_grid = cv2.dilate(occupancy_grid, kernel, iterations=1)
+    return inflated_grid
+
+
 def live_mode():
     cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
     if not cap.isOpened():
@@ -106,7 +103,7 @@ def live_mode():
 
     start, goal = None, None
     clicked_points = []
-    occupancy_grid = None
+    occupancy_grid = None  # <- define here so it’s accessible in mouse_callback
 
     def mouse_callback(event, x, y, flags, param):
         nonlocal goal, clicked_points, occupancy_grid
@@ -139,16 +136,31 @@ def live_mode():
         else:
             start = None
 
-        grid_vis = (1 - occupancy_grid) * 255  # free=255, obstacle=0
+        # Inflate obstacles by 1.5 mm
+        inflated_grid = inflate_obstacles(occupancy_grid)
+
+        # Visualize:
+        # 255 = free space
+        # 0 = original obstacle
+        # 127 = inflated area excluding original obstacles (gray)
+        grid_vis = np.ones_like(occupancy_grid, dtype=np.uint8) * 255  # start with free space white
+        grid_vis[occupancy_grid == 1] = 0
+        inflated_only = (inflated_grid == 1) & (occupancy_grid == 0)
+        grid_vis[inflated_only] = 127
+
+        # Convert to BGR color image for coloring path
+        grid_color = cv2.cvtColor(grid_vis, cv2.COLOR_GRAY2BGR)
 
         if start and goal:
-            path = astar(occupancy_grid, start, goal)
+            path = astar(inflated_grid, start, goal)
             if path:
                 for p in path:
-                    grid_vis[p[0], p[1]] = 127  # Grey path
+                    grid_color[p[0], p[1]] = (255, 0, 0)  # Blue path
 
-        resized_vis = cv2.resize(grid_vis.astype(np.uint8), (640, 360), interpolation=cv2.INTER_NEAREST)
+        resized_vis = cv2.resize(grid_color, (640, 360), interpolation=cv2.INTER_NEAREST)
         cv2.imshow("Occupancy Grid", resized_vis)
+
+            
 
         key = cv2.waitKey(30) & 0xFF
         if key == ord('r'):
@@ -159,6 +171,5 @@ def live_mode():
 
     cap.release()
     cv2.destroyAllWindows()
-
 
 live_mode()
