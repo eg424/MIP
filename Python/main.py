@@ -188,7 +188,7 @@ def play_recording(filename):
             
             current_frame = int(cap_play.get(cv2.CAP_PROP_POS_FRAMES))
             cv2.setTrackbarPos('Position', 'Playback', current_frame)
-            centroids, _, _ = detect_modules(frame)
+            centroids, _ = detect_modules(frame)
             
             # Save first frame and initial centroids for later check
             if initial_frame is None:

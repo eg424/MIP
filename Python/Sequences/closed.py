@@ -87,7 +87,7 @@ def main(stop_event=None):
             print("Failed to read frame.")
             break
 
-        centroids, boxes, _ = detect_modules(frame)
+        centroids, boxes = detect_modules(frame)
         if len(centroids) == 0:
             print("No module detected.")
             time.sleep(1.0 / FPS)

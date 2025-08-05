@@ -23,7 +23,7 @@ import os
 import itertools
 
 # Constants
-y, x = 20, 190
+y, x = 20, 180
 h, w = 325, 325
 pixels_per_mm = 271 / 32
 
