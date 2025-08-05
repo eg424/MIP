@@ -40,7 +40,7 @@ def detect_modules(frame):
     gray_cropped = gray[y:y + h, x:x + w]
 
     # Omit red regions for module detection    
-    frame, red_mask = detect_walls(frame, x, y, w, h)    
+    frame, red_mask, red_contours, _ = detect_walls(frame)
     gray_cropped[red_mask > 0] = 0
     
     # Median blur and binary thresholding
@@ -76,7 +76,7 @@ def detect_modules(frame):
         structure = "Unknown"
         if 0.2 <= aspect_ratio < 0.6:
             structure = "Chain"
-        elif 0.6 <= aspect_ratio < 0.9:
+        elif 0.6 <= aspect_ratio < 0.9 and area > 1000:
             structure = "Gripper"
         elif 0.9 <= aspect_ratio <= 1.1:
             structure = "Square"
@@ -87,6 +87,7 @@ def detect_modules(frame):
         
         # Draw boundaries of detected module/structure
         cv2.drawContours(frame, [box], 0, (0, 255, 0))
+        module_boxes.append(box)
 
         # Calculate centroid(s)
         M = cv2.moments(cnt)
@@ -100,7 +101,7 @@ def detect_modules(frame):
     # for i, ar in enumerate(aspect_ratios, 1):
     #     print(f"Module {i} aspect ratio: {ar:.2f}")
 
-    return centroids, module_boxes, (x, y, w, h)
+    return centroids, module_boxes
 
 
 def draw_im_dist(frame, centroids, pixels_per_mm):
@@ -192,7 +193,7 @@ def process_image(img, filename=""):
     plt.show()
 
 
-def detect_walls(frame, x, y, w, h):
+def detect_walls(frame):
     # HSV colourspace
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     hsv_cropped = hsv[y:y + h, x:x + w]
@@ -210,25 +211,58 @@ def detect_walls(frame, x, y, w, h):
 
     # Find red boundaries
     red_contours, _ = cv2.findContours(red_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    
+    workspace_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+
     for cnt in red_contours:
         area = cv2.contourArea(cnt)
         if area > 300:  # Filter small noise
             cnt += np.array([[x, y]])  # Offset to frame coordinates
             cv2.drawContours(frame, [cnt], -1, (0, 0, 255), 2)
+            cv2.drawContours(workspace_mask, [cnt], -1, 255, thickness=cv2.FILLED)
+    
+    return frame, red_mask, red_contours, workspace_mask
 
-    return frame, red_mask
+
+def show_nav_workspace(frame, red_contours, workspace_mask, module_centroids, module_boxes, idx1=5, idx2=6):
+
+    # Sort red contours by area (largest to smallest)
+    sorted_contours = sorted(red_contours, key=cv2.contourArea, reverse=True)
+    outer_contour = sorted_contours[0] # Outer walls
+    inner_contour = sorted_contours[1] # Workspace
+    rhombus_contour = sorted_contours[2]  # Rhombus
+    
+    # Create blank mask
+    mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+
+    # Draw outer walls, workspace, rhombus, and modules
+    cv2.drawContours(mask, [outer_contour], -1, 255, thickness=cv2.FILLED)
+    cv2.drawContours(mask, [inner_contour], -1, 0, thickness=cv2.FILLED)
+    cv2.drawContours(mask, [rhombus_contour], -1, 255, thickness=cv2.FILLED)
+    for box in module_boxes:
+        cv2.drawContours(mask, [box], -1, 255, thickness=cv2.FILLED)
+
+    # Convert mask to BGR for display
+    mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+    cv2.imshow("Live Workspace Mask", mask_bgr)
+
+    return mask
 
 
 def process_frame(frame):
     # Define workspace
     cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
 
-    # Draw modules and walls
-    centroids, module_boxes, _ = detect_modules(frame)
+    # Detect modules
+    centroids, module_boxes = detect_modules(frame)
     
-    # Draw all pairwise distances in mm
+    # Draw distances
     draw_im_dist(frame, centroids, pixels_per_mm)
+
+    # Detect red contours and workspace mask
+    frame, red_mask, red_contours, workspace_mask = detect_walls(frame)
+
+    # Show navigable workspace and module(s)
+    show_nav_workspace(frame, red_contours, workspace_mask, centroids, module_boxes)
 
     return frame
 
@@ -250,7 +284,7 @@ def live_mode():
         processed_frame = process_frame(frame)
         cv2.imshow("Live Module Detection", processed_frame)
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        if cv2.waitKey(30) & 0xFF == ord('q'):
             break
 
     cap.release()
