@@ -215,7 +215,7 @@ def detect_walls(frame):
 
     for cnt in red_contours:
         area = cv2.contourArea(cnt)
-        if area > 300:  # Filter small noise
+        if area > 500 or area < 20000:
             cnt += np.array([[x, y]])  # Offset to frame coordinates
             cv2.drawContours(frame, [cnt], -1, (0, 0, 255), 2)
             cv2.drawContours(workspace_mask, [cnt], -1, 255, thickness=cv2.FILLED)
@@ -227,6 +227,11 @@ def show_nav_workspace(frame, red_contours, workspace_mask, module_centroids, mo
 
     # Sort red contours by area (largest to smallest)
     sorted_contours = sorted(red_contours, key=cv2.contourArea, reverse=True)
+    
+    # Skip if no red contours
+    if len(sorted_contours) < 3:
+        return frame
+    
     outer_contour = sorted_contours[0] # Outer walls
     inner_contour = sorted_contours[1] # Workspace
     rhombus_contour = sorted_contours[2]  # Rhombus
