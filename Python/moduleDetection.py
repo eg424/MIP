@@ -34,89 +34,6 @@ mode = 'live'
 folder_path = r'C:\Users\erikg\MIP\Python\Images'  # Loop mode
 single_image_path = r'C:\Users\erikg\MIP\Python\Images\4mod2ch2liq.png'  # Change accordingly
 
-def detect_modules(frame):
-    # Binary colourspace
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    gray_cropped = gray[y:y + h, x:x + w]
-
-    # Omit red regions for module detection    
-    frame, red_mask, red_contours, _ = detect_walls(frame)
-    gray_cropped[red_mask > 0] = 0
-    
-    # Median blur and binary thresholding
-    blurred_cropped = cv2.medianBlur(gray_cropped, 5)
-    _, th_cropped = cv2.threshold(blurred_cropped, 82, 255, cv2.THRESH_BINARY)
-
-    # Find contours of the thresholded image
-    contours, _ = cv2.findContours(th_cropped, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    centroids = []
-    module_boxes = []
-    aspect_ratios = []
-
-    # Detect modules
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        if area < 500 or area > 20000:
-            continue
-        
-        rect = cv2.minAreaRect(cnt)
-        box = cv2.boxPoints(rect).astype(int)
-        box += np.array([x, y])
-
-        width, height = rect[1]
-        if height == 0:
-            continue
-
-        aspect_ratio = min(width, height) / max(width, height)        
-        if aspect_ratio < 0.2 or aspect_ratio > 2.2:
-            continue
-        aspect_ratios.append(aspect_ratio)
-        
-        structure = "Unknown"
-        if 0.2 <= aspect_ratio < 0.6:
-            structure = "Chain"
-        elif 0.6 <= aspect_ratio < 0.9 and area > 1000:
-            structure = "Gripper"
-        elif 0.9 <= aspect_ratio <= 1.1:
-            structure = "Square"
-            if area < 1000:
-                structure = "Module"
-        elif 0.9 <= aspect_ratio < 0.95 and area > 3000:
-            structure = "Ring"
-        
-        # Draw boundaries of detected module/structure
-        cv2.drawContours(frame, [box], 0, (0, 255, 0))
-        module_boxes.append(box)
-
-        # Calculate centroid(s)
-        M = cv2.moments(cnt)
-        if M["m00"] != 0:
-            cX = int(M["m10"] / M["m00"]) + x
-            cY = int(M["m01"] / M["m00"]) + y
-            centroids.append((cX, cY))
-            cv2.circle(frame, (cX, cY), 5, (0, 0, 255), -1)
-            cv2.putText(frame, structure, (cX, cY), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-
-    # for i, ar in enumerate(aspect_ratios, 1):
-    #     print(f"Module {i} aspect ratio: {ar:.2f}")
-
-    return centroids, module_boxes
-
-
-def draw_im_dist(frame, centroids, pixels_per_mm):
-    for (pt1, pt2) in itertools.combinations(centroids, 2):
-        dx = pt2[0] - pt1[0]
-        dy = pt2[1] - pt1[1]
-        pixel_distance = np.hypot(dx, dy)
-        mm_distance = pixel_distance / pixels_per_mm
-
-        mid_point = ((pt1[0] + pt2[0]) // 2, (pt1[1] + pt2[1]) // 2)
-
-        cv2.line(frame, pt1, pt2, (255, 255, 0), 1)
-        cv2.putText(frame, f"{mm_distance:.1f} mm", mid_point,
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-
 
 def process_image(img, filename=""):
     """
@@ -193,6 +110,92 @@ def process_image(img, filename=""):
     plt.show()
 
 
+def detect_modules(frame):
+    # Binary colourspace
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    gray_cropped = gray[y:y + h, x:x + w]
+
+    # Omit red regions for module detection    
+    frame, red_mask, red_contours = detect_walls(frame)
+    gray_cropped[red_mask > 0] = 0
+    
+    # Median blur and binary thresholding
+    blurred_cropped = cv2.medianBlur(gray_cropped, 5)
+    _, th_cropped = cv2.threshold(blurred_cropped, 82, 255, cv2.THRESH_BINARY)
+
+    # Find contours of the thresholded image
+    contours, _ = cv2.findContours(th_cropped, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    centroids = []
+    module_boxes = []
+    aspect_ratios = []
+
+    # Detect modules
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if area < 500 or area > 20000:
+            continue
+        
+        rect = cv2.minAreaRect(cnt)
+        box = cv2.boxPoints(rect).astype(int)
+        box += np.array([x, y])
+
+        width, height = rect[1]
+        if height == 0:
+            continue
+
+        aspect_ratio = min(width, height) / max(width, height)        
+        if aspect_ratio < 0.2 or aspect_ratio > 2.2:
+            continue
+        aspect_ratios.append(aspect_ratio)
+        
+        structure = "Unknown"
+        if 0.2 <= aspect_ratio < 0.6:
+            structure = "Chain"
+        elif 0.6 <= aspect_ratio < 0.9 and area > 1000:
+            structure = "Gripper"
+        elif 0.9 <= aspect_ratio <= 1.1:
+            structure = "Square"
+            if area < 1000:
+                structure = "Module"
+        elif 0.9 <= aspect_ratio < 0.95 and area > 3000:
+            structure = "Ring"
+        
+        # Draw boundaries of detected module/structure
+        cv2.drawContours(frame, [box], 0, (0, 255, 0))
+        module_boxes.append(box)
+
+        # Calculate centroid(s)
+        M = cv2.moments(cnt)
+        if M["m00"] != 0:
+            cX = int(M["m10"] / M["m00"]) + x
+            cY = int(M["m01"] / M["m00"]) + y
+            centroids.append((cX, cY))
+            cv2.circle(frame, (cX, cY), 5, (0, 0, 255), -1)
+            cv2.putText(frame, structure, (cX, cY), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+
+    # for i, ar in enumerate(aspect_ratios, 1):
+    #     print(f"Module {i} aspect ratio: {ar:.2f}")
+    
+    draw_im_dist(frame, centroids, pixels_per_mm)
+
+    return centroids, module_boxes
+
+
+def draw_im_dist(frame, centroids, pixels_per_mm):
+    for (pt1, pt2) in itertools.combinations(centroids, 2):
+        dx = pt2[0] - pt1[0]
+        dy = pt2[1] - pt1[1]
+        pixel_distance = np.hypot(dx, dy)
+        mm_distance = pixel_distance / pixels_per_mm
+
+        mid_point = ((pt1[0] + pt2[0]) // 2, (pt1[1] + pt2[1]) // 2)
+
+        cv2.line(frame, pt1, pt2, (255, 255, 0), 1)
+        cv2.putText(frame, f"{mm_distance:.1f} mm", mid_point,
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+
 def detect_walls(frame):
     # HSV colourspace
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -211,19 +214,22 @@ def detect_walls(frame):
 
     # Find red boundaries
     red_contours, _ = cv2.findContours(red_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    workspace_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+    
+    return frame, red_mask, red_contours
 
+
+def draw_walls(frame):
+    frame, red_mask, red_contours = detect_walls(frame)
     for cnt in red_contours:
         area = cv2.contourArea(cnt)
         if area > 500 or area < 20000:
             cnt += np.array([[x, y]])  # Offset to frame coordinates
             cv2.drawContours(frame, [cnt], -1, (0, 0, 255), 2)
-            cv2.drawContours(workspace_mask, [cnt], -1, 255, thickness=cv2.FILLED)
+        
+    return frame, red_contours
     
-    return frame, red_mask, red_contours, workspace_mask
 
-
-def show_nav_workspace(frame, red_contours, workspace_mask, module_centroids, module_boxes, idx1=5, idx2=6):
+def show_nav_workspace(frame, red_contours, module_boxes, idx1=5, idx2=6):
 
     # Sort red contours by area (largest to smallest)
     sorted_contours = sorted(red_contours, key=cv2.contourArea, reverse=True)
@@ -257,17 +263,14 @@ def process_frame(frame):
     # Define workspace
     cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
 
-    # Detect modules
+    # Detect module(s) and their distance
     centroids, module_boxes = detect_modules(frame)
     
-    # Draw distances
-    draw_im_dist(frame, centroids, pixels_per_mm)
-
-    # Detect red contours and workspace mask
-    frame, red_mask, red_contours, workspace_mask = detect_walls(frame)
+    # Draw walls
+    frame, red_contours = draw_walls(frame)
 
     # Show navigable workspace and module(s)
-    show_nav_workspace(frame, red_contours, workspace_mask, centroids, module_boxes)
+    show_nav_workspace(frame, red_contours, module_boxes)
 
     return frame
 
