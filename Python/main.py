@@ -92,7 +92,7 @@ def send_zero_pwm():
 
 
 def serial_thread():
-    global ser, current_input_string, waiting_for_input
+    global ser, current_input_string, waiting_for_input, pwm_zeroed
     ser = serial.Serial(PORT, BAUDRATE, timeout=2)
     time.sleep(0.5)
     # print(f"Opened serial port {PORT} at {BAUDRATE} baud.")
@@ -119,6 +119,7 @@ def serial_thread():
                     if ser.is_open:
                         time.sleep(0.5)
                         ser.write((choice + '\n').encode())
+                        pwm_zeroed = False
                     print("Recording started. Press 'R' to stop recording.")
                 except ValueError:
                     print("Invalid currents input. Please enter comma-separated floats.")
@@ -421,7 +422,7 @@ def main_loop():
         now = time.time()
 
         # Periodic zero PWM if in zero-mode
-        if ser and ser.is_open:
+        if pwm_zeroed and ser and ser.is_open:
             if now - last_pwm_send_time > 0.5:
                 send_zero_pwm()
                 last_pwm_send_time = now

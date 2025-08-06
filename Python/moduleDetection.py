@@ -150,14 +150,15 @@ def detect_modules(frame):
         aspect_ratios.append(aspect_ratio)
         
         structure = "Unknown"
-        if 0.2 <= aspect_ratio < 0.6:
+        if area < 1000:
+            structure = "Module"
+        elif 0.2 <= aspect_ratio < 0.6:
             structure = "Chain"
         elif 0.6 <= aspect_ratio < 0.9 and area > 1000:
             structure = "Gripper"
         elif 0.9 <= aspect_ratio <= 1.1:
             structure = "Square"
-            if area < 1000:
-                structure = "Module"
+
         elif 0.9 <= aspect_ratio < 0.95 and area > 3000:
             structure = "Ring"
         
@@ -171,7 +172,7 @@ def detect_modules(frame):
             cX = int(M["m10"] / M["m00"]) + x
             cY = int(M["m01"] / M["m00"]) + y
             centroids.append((cX, cY))
-            cv2.circle(frame, (cX, cY), 5, (0, 0, 255), -1)
+            cv2.circle(frame, (cX, cY), 2, (0, 0, 255), -1)
             cv2.putText(frame, structure, (cX, cY), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
     # for i, ar in enumerate(aspect_ratios, 1):
@@ -254,7 +255,7 @@ def show_nav_workspace(frame, red_contours, module_boxes, idx1=5, idx2=6):
         cv2.drawContours(vis, [box], -1, (0, 255, 255), 2)  # Yellow outline
         cv2.putText(vis, "Module", tuple(box[0]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
 
-    cv2.imshow("Live Workspace Mask", vis)
+    # cv2.imshow("Live Workspace Mask", vis)
 
     return mask
 

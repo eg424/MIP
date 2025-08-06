@@ -1,95 +1,122 @@
 import cv2
 import numpy as np
-import itertools
-from moduleDetection import detect_modules, draw_walls, show_nav_workspace
+import serial
+import time
 import heapq
+import threading
+from moduleDetection import detect_modules, draw_walls, show_nav_workspace
 
 # Constants
 y, x = 20, 180
 h, w = 325, 325
 pixels_per_mm = 271 / 32
+theta = 0
+alpha = 0
+beta = 0
+
+direction_to_serial = {
+    "UP": "0,0,0,-1.5\n", #['0,.85,0,0', '0,0,0,2.5', '0,0,0,0'], # 
+    "DOWN": "0,0,0,1.5\n",
+    "LEFT": "0,0.5,0,0\n", #['0,0.85,0,0', '0,0,0,2.5', '0,0,0,0'], # seq8
+    "RIGHT": "0,-0.5,0,0\n",
+    "UP_LEFT": "0,0.5,0,-1.5\n",
+    "UP_RIGHT": "0,-0.5,0,-1.5\n",
+    "DOWN_LEFT": "0,0.5,0,1.5\n",
+    "DOWN_RIGHT": "0,-0.5,0,1.5\n"
+}
 
 
-def mask_to_grid(mask, grid_size_mm=1):
-    cell_size_pixels = int(grid_size_mm * pixels_per_mm)
+def update_orientation(move, theta, alpha, beta):
+    if move == "UP":
+        if beta == 90:
+            alpha -= 90
+        elif beta == -90:
+            alpha += 90
+        else:
+            theta -= 90
+    elif move == "DOWN":
+        if beta == 90:
+            alpha += 90
+        elif beta == -90:
+            alpha -= 90
+        else:
+            theta += 90
+    elif move == "LEFT":
+        if theta == 90:
+            alpha -= 90
+        elif theta == -90:
+            alpha += 90
+        else:
+            beta -= 90
+    elif move == "RIGHT":
+        if theta == 90:
+            alpha += 90
+        elif theta == -90:
+            alpha -= 90
+        else:
+            beta += 90
 
-    grid_h = mask.shape[0] // cell_size_pixels
-    grid_w = mask.shape[1] // cell_size_pixels
-
-    resized_mask = cv2.resize(mask, (grid_w, grid_h), interpolation=cv2.INTER_NEAREST)
-    occupancy_grid = (resized_mask > 0).astype(np.uint8)
-
-    return occupancy_grid
-
-
-def display_grid(occupancy_grid):
-    grid_vis = (1 - occupancy_grid) * 255  # Flip: free=255, obstacle=0
-    grid_vis = cv2.resize(grid_vis.astype(np.uint8), (640, 360), interpolation=cv2.INTER_NEAREST)
-    cv2.imshow("Occupancy Grid", grid_vis)
+    # Normalize angles to [-180, 180]
+    theta = ((theta + 180) % 360) - 180
+    alpha = ((alpha + 180) % 360) - 180
+    beta = ((beta + 180) % 360) - 180
+    return theta, alpha, beta
 
 
 def heuristic(a, b):
-    # Euclidean distance as heuristic function for A*
     return np.linalg.norm(np.array(a) - np.array(b))
-
 
 def astar(grid, start, goal):
     h, w = grid.shape
-
-    # Open set implemented as a priority queue (heapq)
     open_set = []
     heapq.heappush(open_set, (0 + heuristic(start, goal), 0, start, [start]))
-
-    visited = set()  # Set to keep track of visited nodes to prevent revisiting
+    visited = set()
 
     while open_set:
-        # Pop node with lowest f_score = g_score + heuristic
         _, cost, current, path = heapq.heappop(open_set)
-
-        # If goal is reached, return the path
         if current == goal:
             return path
-
         if current in visited:
-            continue  # Skip if already processed
+            continue
         visited.add(current)
 
-        # Explore neighbors (8-connectivity)
         for dx, dy in [(-1,0), (1,0), (0,-1), (0,1), (-1,-1), (-1,1), (1,-1), (1,1)]:
             nx, ny = current[0] + dx, current[1] + dy
-
-            # Check if neighbor is inside grid bounds and free (not an obstacle)
             if 0 <= nx < h and 0 <= ny < w and grid[nx, ny] == 0:
-                # Diagonal moves cost more (√2), straight moves cost 1
                 step_cost = np.sqrt(2) if dx != 0 and dy != 0 else 1
                 new_cost = cost + step_cost
-                # Calculate priority: new cost + heuristic estimate to goal
                 priority = new_cost + heuristic((nx, ny), goal)
-                # Add neighbor to open set with updated path
                 heapq.heappush(open_set, (priority, new_cost, (nx, ny), path + [(nx, ny)]))
-
-    return None  # Return None if no path is found
-
-
-def process_frame(frame):
-    _, module_boxes = detect_modules(frame)
-    _, red_contours = draw_walls(frame)
-    mask = show_nav_workspace(frame, red_contours, module_boxes)
-
-    # Convert mask to occupancy grid and display it
-    occupancy_grid = mask_to_grid(mask)
-    display_grid(occupancy_grid)
-    
-    return frame
-
+    return None
 
 def inflate_obstacles(occupancy_grid):
-    inflation_cells = int(np.ceil(1.5)) # Module radius
-    # Create a circular kernel for dilation
+    inflation_cells = int(np.ceil(1.5))  # 1.5 mm
     kernel_size = inflation_cells * 2
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-    inflated_grid = cv2.dilate(occupancy_grid, kernel, iterations=1)
-    return inflated_grid
+    return cv2.dilate(occupancy_grid, kernel, iterations=1)
+
+def path_to_directions(path):
+    directions = []
+    for i in range(1, len(path)):
+        dx = path[i][0] - path[i-1][0]
+        dy = path[i][1] - path[i-1][1]
+        if dx == -1 and dy == 0:
+            directions.append("UP")
+        elif dx == 1 and dy == 0:
+            directions.append("DOWN")
+        elif dx == 0 and dy == -1:
+            directions.append("LEFT")
+        elif dx == 0 and dy == 1:
+            directions.append("RIGHT")
+        elif dx == -1 and dy == -1:
+            directions.append("UP_LEFT")
+        elif dx == -1 and dy == 1:
+            directions.append("UP_RIGHT")
+        elif dx == 1 and dy == -1:
+            directions.append("DOWN_LEFT")
+        elif dx == 1 and dy == 1:
+            directions.append("DOWN_RIGHT")
+    return directions
 
 
 def live_mode():
@@ -98,22 +125,30 @@ def live_mode():
         print("Error: Could not open video capture.")
         return
 
-    print("Click once on the occupancy grid window to set the goal point.")
-    print("The start point is automatically set to the first detected module centroid.")
+    print("Click on the occupancy grid window to set the goal point.")
+    print("Press 'Enter' to start movement. Press 'r' to reset goal. Press 'q' to quit.")
 
-    start, goal = None, None
-    clicked_points = []
-    occupancy_grid = None  # <- define here so it’s accessible in mouse_callback
+    goal = None
+    goal_reached = False
+    movement_enabled = False
+    cell_size_pixels = int(1 * pixels_per_mm)
+    tolerance_cells = 2  # Acceptable distance to goal in grid cells
+
+    directions = []
+    direction_index = 0
+    ser = None
 
     def mouse_callback(event, x, y, flags, param):
-        nonlocal goal, clicked_points, occupancy_grid
-        if event == cv2.EVENT_LBUTTONDOWN and occupancy_grid is not None:
-            # Scale click to grid coordinates
-            grid_h, grid_w = occupancy_grid.shape
-            clicked_col = int(x * grid_w / 640)
-            clicked_row = int(y * grid_h / 360)
+        nonlocal goal, goal_reached, movement_enabled, directions, direction_index
+        if event == cv2.EVENT_LBUTTONDOWN:
+            goal_reached = False
+            movement_enabled = False
+            directions = []
+            direction_index = 0
+            clicked_col = int(x * occupancy_grid.shape[1] / 640)
+            clicked_row = int(y * occupancy_grid.shape[0] / 360)
             goal = (clicked_row, clicked_col)
-            print(f"Goal set to: {goal}")
+            print(f"Goal set to: {goal}. Press 'Enter' to begin movement.")
 
     cv2.namedWindow("Occupancy Grid")
     cv2.setMouseCallback("Occupancy Grid", mouse_callback)
@@ -127,49 +162,183 @@ def live_mode():
         centroids, module_boxes = detect_modules(frame)
         frame, red_contours = draw_walls(frame)
         mask = show_nav_workspace(frame, red_contours, module_boxes)
-        occupancy_grid = mask_to_grid(mask)
+        cv2.imshow("Live Module Detection", frame)
 
-        if centroids:
-            cell_size_pixels = int(1 * pixels_per_mm)
-            start_pixel = centroids[0]
-            start = (start_pixel[1] // cell_size_pixels, start_pixel[0] // cell_size_pixels)
-        else:
-            start = None
-
-        # Inflate obstacles by 1.5 mm
+        occupancy_grid = cv2.resize(mask, (mask.shape[1] // cell_size_pixels, mask.shape[0] // cell_size_pixels),
+                                    interpolation=cv2.INTER_NEAREST)
+        occupancy_grid = (occupancy_grid > 0).astype(np.uint8)
         inflated_grid = inflate_obstacles(occupancy_grid)
 
-        # Visualize:
-        # 255 = free space
-        # 0 = original obstacle
-        # 127 = inflated area excluding original obstacles (gray)
-        grid_vis = np.ones_like(occupancy_grid, dtype=np.uint8) * 255  # start with free space white
+        grid_vis = np.ones_like(occupancy_grid, dtype=np.uint8) * 255
         grid_vis[occupancy_grid == 1] = 0
         inflated_only = (inflated_grid == 1) & (occupancy_grid == 0)
         grid_vis[inflated_only] = 127
-
-        # Convert to BGR color image for coloring path
         grid_color = cv2.cvtColor(grid_vis, cv2.COLOR_GRAY2BGR)
 
-        if start and goal:
+        if centroids:
+            module_pos = centroids[0]
+            start = (module_pos[1] // cell_size_pixels, module_pos[0] // cell_size_pixels)
+
+            if goal and not goal_reached:
+                dist_to_goal = np.linalg.norm(np.array(start) - np.array(goal))
+                if dist_to_goal <= tolerance_cells:
+                    print("Goal reached.")
+                    goal_reached = True
+                    movement_enabled = False
+                    directions = []
+                    direction_index = 0
+                    if ser:
+                        try:
+                            ser.write(b'0,0,0,0\n')  # stop command just in case
+                            ser.close()
+                        except:
+                            pass
+                        ser = None
+
+            if movement_enabled and not goal_reached and directions == [] and goal:
+                path = astar(inflated_grid, start, goal)
+                if path and len(path) > 1:
+                    directions = path_to_directions(path)
+                    direction_index = 0
+
+                    # Only open serial if not already opened
+                    if ser is None or not ser.is_open:
+                        try:
+                            ser = serial.Serial('COM3', 9600, timeout=2)
+                            time.sleep(1)
+                        except Exception as e:
+                            print(f"Serial error opening port: {e}")
+                            movement_enabled = False
+                            directions = []
+                            direction_index = 0
+
+
+            # Send one direction command per frame if not reached goal
+            if movement_enabled and directions and direction_index < len(directions) and ser and not goal_reached:
+                d = directions[direction_index]
+                if d in direction_to_serial:
+                    cmd = direction_to_serial[d]
+
+                    # Send the command
+                    ser.write(cmd.encode())
+                    print(f"Sent: {cmd.strip()}")
+
+                    # Update orientation
+                    global theta, alpha, beta
+                    theta, alpha, beta = update_orientation(d, theta, alpha, beta)
+                    print(f"Orientation: θ={theta}, α={alpha}, β={beta}")
+
+                    direction_index += 1
+                    time.sleep(0.1)
+
+
+            # After finishing all directions, send stop and disable movement (if not already stopped)
+            # Persistent checking and command retry loop
+            if movement_enabled and directions and direction_index < len(directions) and ser and not goal_reached:
+                expected_pos = directions[direction_index]
+                d = directions[direction_index]
+                cmd = direction_to_serial[d]
+                
+                if isinstance(cmd, list):
+                    for c in cmd:
+                        ser.write((c + '\n').encode())
+                        print(f"Sent: {c}")
+                        time.sleep(0.1)
+                else:
+                    ser.write(cmd.encode())
+                    print(f"Sent: {cmd.strip()}")
+                    time.sleep(0.1)
+                
+                # Wait and verify module has moved to next step
+                verified = False
+                retry_count = 0
+                max_retries = 3
+
+                while not verified and retry_count < max_retries:
+                    time.sleep(0.5)  # wait for module to move
+
+                    # Capture and reprocess frame
+                    ret, frame = cap.read()
+                    if not ret:
+                        print("Failed to grab frame.")
+                        break
+
+                    centroids, module_boxes = detect_modules(frame)
+                    frame, red_contours = draw_walls(frame)
+                    mask = show_nav_workspace(frame, red_contours, module_boxes)
+                    occupancy_grid = cv2.resize(mask, (mask.shape[1] // cell_size_pixels, mask.shape[0] // cell_size_pixels),
+                                                interpolation=cv2.INTER_NEAREST)
+                    occupancy_grid = (occupancy_grid > 0).astype(np.uint8)
+                    inflated_grid = inflate_obstacles(occupancy_grid)
+
+                    if centroids:
+                        module_pos = centroids[0]
+                        current_pos = (module_pos[1] // cell_size_pixels, module_pos[0] // cell_size_pixels)
+                        expected_path_cell = path[direction_index + 1]
+                        dist = np.linalg.norm(np.array(current_pos) - np.array(expected_path_cell))
+                        print(f"Checking position: Current {current_pos}, Expected {expected_path_cell}, Dist {dist:.2f}")
+
+                        if dist <= 1:  # close enough to next cell
+                            verified = True
+                            direction_index += 1
+                        else:
+                            retry_count += 1
+                            print(f"Retry {retry_count}: Resending command.")
+                            if isinstance(cmd, list):
+                                for c in cmd:
+                                    ser.write((c + '\n').encode())
+                                    time.sleep(0.1)
+                            else:
+                                ser.write(cmd.encode())
+                                time.sleep(0.1)
+
+                if not verified:
+                    print("Module failed to reach the expected step. Recomputing path...")
+                    directions = []
+                    direction_index = 0
+
+
+        if goal:
             path = astar(inflated_grid, start, goal)
             if path:
                 for p in path:
-                    grid_color[p[0], p[1]] = (255, 0, 0)  # Blue path
+                    grid_color[p[0], p[1]] = (255, 0, 0)
 
         resized_vis = cv2.resize(grid_color, (640, 360), interpolation=cv2.INTER_NEAREST)
         cv2.imshow("Occupancy Grid", resized_vis)
 
-            
-
-        key = cv2.waitKey(30) & 0xFF
+        key = cv2.waitKey(1) & 0xFF
         if key == ord('r'):
             goal = None
+            goal_reached = False
+            movement_enabled = False
+            directions = []
+            direction_index = 0
+            if ser:
+                try:
+                    ser.write(b'0,0,0,0\n')
+                    ser.close()
+                except:
+                    pass
+                ser = None
             print("Goal reset. Click to set a new goal.")
         elif key == ord('q'):
+            if ser:
+                try:
+                    ser.write(b'0,0,0,0\n')
+                    ser.close()
+                except:
+                    pass
             break
+        elif key == 13:  # Enter key
+            if goal and not goal_reached:
+                movement_enabled = True
+                directions = []
+                direction_index = 0
+                print("Movement enabled.")
 
     cap.release()
     cv2.destroyAllWindows()
+
 
 live_mode()
