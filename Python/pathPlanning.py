@@ -5,6 +5,7 @@ import time
 import heapq
 import threading
 from moduleDetection import detect_modules, draw_walls, show_nav_workspace
+from main import send_zero_pwm
 
 # Constants
 y, x = 20, 180
@@ -15,15 +16,55 @@ alpha = 0
 beta = 0
 
 direction_to_serial = {
-    "UP": "0,0,0,-1.5\n", #['0,.85,0,0', '0,0,0,2.5', '0,0,0,0'], # 
+    "UP": "0,0,0,-1.5\n",
     "DOWN": "0,0,0,1.5\n",
-    "LEFT": "0,0.5,0,0\n", #['0,0.85,0,0', '0,0,0,2.5', '0,0,0,0'], # seq8
+    "LEFT": "0,0.5,0,0\n",
     "RIGHT": "0,-0.5,0,0\n",
     "UP_LEFT": "0,0.5,0,-1.5\n",
     "UP_RIGHT": "0,-0.5,0,-1.5\n",
     "DOWN_LEFT": "0,0.5,0,1.5\n",
     "DOWN_RIGHT": "0,-0.5,0,1.5\n"
 }
+
+def norm_angle(x):
+    return ((round(x / 90) * 90 + 180) % 360) - 180
+
+def get_field_command(move, theta, alpha, beta):  # ⬅️ MODIFIED
+    theta = norm_angle(theta)
+    alpha = norm_angle(alpha)
+    beta = norm_angle(beta)
+
+    # Default case
+    if theta == 0 and beta == 0:
+        return direction_to_serial[move]
+
+    # Handle face-forward or backward
+    if theta == 90:
+        if move == "LEFT":
+            return direction_to_serial["RIGHT"]
+        elif move == "RIGHT":
+            return direction_to_serial["LEFT"]
+    elif theta == -90:
+        if move == "LEFT":
+            return direction_to_serial["LEFT"]
+        elif move == "RIGHT":
+            return direction_to_serial["RIGHT"]
+
+    # Handle face-left or right
+    if beta == 90:
+        if move == "UP":
+            return direction_to_serial["RIGHT"]
+        elif move == "DOWN":
+            return direction_to_serial["LEFT"]
+    elif beta == -90:
+        if move == "UP":
+            return direction_to_serial["LEFT"]
+        elif move == "DOWN":
+            return direction_to_serial["RIGHT"]
+
+    # Fallback
+    print(f"[WARN] Unhandled orientation θ={theta}, α={alpha}, β={beta}. Using original.")
+    return direction_to_serial[move]
 
 
 def update_orientation(move, theta, alpha, beta):
@@ -56,20 +97,20 @@ def update_orientation(move, theta, alpha, beta):
         else:
             beta += 90
 
-    # Normalize angles to [-180, 180]
-    theta = ((theta + 180) % 360) - 180
-    alpha = ((alpha + 180) % 360) - 180
-    beta = ((beta + 180) % 360) - 180
+    theta = norm_angle(theta)
+    alpha = norm_angle(alpha)
+    beta = norm_angle(beta)
     return theta, alpha, beta
 
 
 def heuristic(a, b):
     return np.linalg.norm(np.array(a) - np.array(b))
 
+
 def astar(grid, start, goal):
     h, w = grid.shape
     open_set = []
-    heapq.heappush(open_set, (0 + heuristic(start, goal), 0, start, [start]))
+    heapq.heappush(open_set, (heuristic(start, goal), 0, start, [start]))
     visited = set()
 
     while open_set:
@@ -83,17 +124,19 @@ def astar(grid, start, goal):
         for dx, dy in [(-1,0), (1,0), (0,-1), (0,1), (-1,-1), (-1,1), (1,-1), (1,1)]:
             nx, ny = current[0] + dx, current[1] + dy
             if 0 <= nx < h and 0 <= ny < w and grid[nx, ny] == 0:
-                step_cost = np.sqrt(2) if dx != 0 and dy != 0 else 1
+                step_cost = 1
                 new_cost = cost + step_cost
                 priority = new_cost + heuristic((nx, ny), goal)
                 heapq.heappush(open_set, (priority, new_cost, (nx, ny), path + [(nx, ny)]))
     return None
+
 
 def inflate_obstacles(occupancy_grid):
     inflation_cells = int(np.ceil(1.5))  # 1.5 mm
     kernel_size = inflation_cells * 2
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
     return cv2.dilate(occupancy_grid, kernel, iterations=1)
+
 
 def path_to_directions(path):
     directions = []
@@ -120,6 +163,7 @@ def path_to_directions(path):
 
 
 def live_mode():
+    global theta, alpha, beta
     cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
     if not cap.isOpened():
         print("Error: Could not open video capture.")
@@ -132,7 +176,7 @@ def live_mode():
     goal_reached = False
     movement_enabled = False
     cell_size_pixels = int(1 * pixels_per_mm)
-    tolerance_cells = 2  # Acceptable distance to goal in grid cells
+    tolerance_cells = 1  # Acceptable distance to goal in grid cells
 
     directions = []
     direction_index = 0
@@ -189,7 +233,7 @@ def live_mode():
                     direction_index = 0
                     if ser:
                         try:
-                            ser.write(b'0,0,0,0\n')  # stop command just in case
+                            send_zero_pwm()
                             ser.close()
                         except:
                             pass
@@ -212,91 +256,19 @@ def live_mode():
                             directions = []
                             direction_index = 0
 
-
             # Send one direction command per frame if not reached goal
             if movement_enabled and directions and direction_index < len(directions) and ser and not goal_reached:
                 d = directions[direction_index]
-                if d in direction_to_serial:
-                    cmd = direction_to_serial[d]
+                cmd = get_field_command(d, theta, alpha, beta) 
+                ser.write(cmd.encode())
+                print(f"Sent: {cmd.strip()}")
 
-                    # Send the command
-                    ser.write(cmd.encode())
-                    print(f"Sent: {cmd.strip()}")
-
-                    # Update orientation
-                    global theta, alpha, beta
-                    theta, alpha, beta = update_orientation(d, theta, alpha, beta)
-                    print(f"Orientation: θ={theta}, α={alpha}, β={beta}")
-
-                    direction_index += 1
-                    time.sleep(0.1)
-
-
-            # After finishing all directions, send stop and disable movement (if not already stopped)
-            # Persistent checking and command retry loop
-            if movement_enabled and directions and direction_index < len(directions) and ser and not goal_reached:
-                expected_pos = directions[direction_index]
-                d = directions[direction_index]
-                cmd = direction_to_serial[d]
+                # Update orientation
+                theta, alpha, beta = update_orientation(d, theta, alpha, beta)
+                print(f"Orientation updated → θ={theta}, α={alpha}, β={beta}")
+                direction_index += 1
+                time.sleep(0.1)
                 
-                if isinstance(cmd, list):
-                    for c in cmd:
-                        ser.write((c + '\n').encode())
-                        print(f"Sent: {c}")
-                        time.sleep(0.1)
-                else:
-                    ser.write(cmd.encode())
-                    print(f"Sent: {cmd.strip()}")
-                    time.sleep(0.1)
-                
-                # Wait and verify module has moved to next step
-                verified = False
-                retry_count = 0
-                max_retries = 3
-
-                while not verified and retry_count < max_retries:
-                    time.sleep(0.5)  # wait for module to move
-
-                    # Capture and reprocess frame
-                    ret, frame = cap.read()
-                    if not ret:
-                        print("Failed to grab frame.")
-                        break
-
-                    centroids, module_boxes = detect_modules(frame)
-                    frame, red_contours = draw_walls(frame)
-                    mask = show_nav_workspace(frame, red_contours, module_boxes)
-                    occupancy_grid = cv2.resize(mask, (mask.shape[1] // cell_size_pixels, mask.shape[0] // cell_size_pixels),
-                                                interpolation=cv2.INTER_NEAREST)
-                    occupancy_grid = (occupancy_grid > 0).astype(np.uint8)
-                    inflated_grid = inflate_obstacles(occupancy_grid)
-
-                    if centroids:
-                        module_pos = centroids[0]
-                        current_pos = (module_pos[1] // cell_size_pixels, module_pos[0] // cell_size_pixels)
-                        expected_path_cell = path[direction_index + 1]
-                        dist = np.linalg.norm(np.array(current_pos) - np.array(expected_path_cell))
-                        print(f"Checking position: Current {current_pos}, Expected {expected_path_cell}, Dist {dist:.2f}")
-
-                        if dist <= 1:  # close enough to next cell
-                            verified = True
-                            direction_index += 1
-                        else:
-                            retry_count += 1
-                            print(f"Retry {retry_count}: Resending command.")
-                            if isinstance(cmd, list):
-                                for c in cmd:
-                                    ser.write((c + '\n').encode())
-                                    time.sleep(0.1)
-                            else:
-                                ser.write(cmd.encode())
-                                time.sleep(0.1)
-
-                if not verified:
-                    print("Module failed to reach the expected step. Recomputing path...")
-                    directions = []
-                    direction_index = 0
-
 
         if goal:
             path = astar(inflated_grid, start, goal)
@@ -314,23 +286,25 @@ def live_mode():
             movement_enabled = False
             directions = []
             direction_index = 0
+            theta, alpha, beta = 0, 0, 0
+            send_zero_pwm()
             if ser:
                 try:
-                    ser.write(b'0,0,0,0\n')
                     ser.close()
                 except:
                     pass
                 ser = None
-            print("Goal reset. Click to set a new goal.")
+            print("Goal reset. Current set to zero.")
+
         elif key == ord('q'):
             if ser:
                 try:
-                    ser.write(b'0,0,0,0\n')
+                    send_zero_pwm()
                     ser.close()
                 except:
                     pass
             break
-        elif key == 13:  # Enter key
+        elif key == 13:
             if goal and not goal_reached:
                 movement_enabled = True
                 directions = []
