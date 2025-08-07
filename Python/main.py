@@ -82,6 +82,8 @@ def stop_recording():
         out.release()
     send_zero_pwm()
     print("Recording stopped. Press 'Q' or 'ESC' to play the recording.")
+    
+    sequence_stop_event.clear()
 
 
 def send_zero_pwm():
@@ -238,12 +240,12 @@ def play_recording(filename):
         key = cv2.waitKey(delay if playing else 50) & 0xFF
 
         # Play/Pause
-        if key in [ord(' '), ord('p')]:
-            if not playing and current_frame == total_frames - 1:
+        if key in [ord(' '), ord('p')] and not playing:
+            playing = not playing
+            if current_frame == total_frames - 1:
                 cap_play.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 current_frame = 0
-            playing = not playing
-            
+                
         # Save Recording    
         elif key == ord('s') and not already_saved:
             cap_play.release()
@@ -284,6 +286,8 @@ def play_recording(filename):
             # Replace original saved file with overlayed version
             os.remove(new_filename)
             os.rename(temp_overlay_filename, new_filename)
+            already_saved = True
+            
 
             # Save trajectory image using last frame and trajectories
             if len(trajectories) > 0 and len(trajectories[0]) > 0:
@@ -478,6 +482,8 @@ def main_loop():
         elif key == ord('r'):
             if not recording:
                 print("Press Enter after inputting currents to start recording.")
+                recording = True
+                last_record_time = time.time()
             else:
                 print(f"Recording stopped. Press 'q' or 'ESC' to play the recording.")
                 recording = False
@@ -486,7 +492,14 @@ def main_loop():
                     out = None
                 final_filename = TEMP_FILENAME
 
+                sequence_stop_event.set()
                 send_zero_pwm()
+                pwm_zeroed = True
+                last_pwm_send_time = 0
+                auto_playback_filename = TEMP_FILENAME
+                
+                waiting_for_input = True
+                input_queue.queue.clear()
 
     cleanup_and_exit()
 
