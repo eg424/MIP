@@ -28,6 +28,7 @@ in_replay = False
 last_record_time = time.time()
 current_input_string = ""
 waiting_for_input = True 
+awaiting_save_decision = False
 input_queue = queue.Queue()
 ser = None
 pwm_zeroed = False 
@@ -104,7 +105,8 @@ def serial_thread():
     valid_sequences = {str(i) for i in range(1,15)}.union({f"seq{i}" for i in range(1,15)}, named_sequences)
 
     while True:
-        if waiting_for_input and not in_replay:
+        if waiting_for_input and not awaiting_save_decision:
+
             print("\nInput sequence to run:")
             print("  - Enter sequence number (e.g. 1) or name (e.g. seq1)")
             print("  - Or enter currents as comma-separated values (e.g. 3.0, 1.5, -2.0, 0.5) for manual input")
@@ -150,7 +152,7 @@ def serial_thread():
  
             
 def play_recording(filename):
-    global final_filename, in_replay, waiting_for_input
+    global final_filename, in_replay, waiting_for_input, awaiting_save_decision
     
     print(f"Playing back: {filename}")
     cap_play = cv2.VideoCapture(filename)
@@ -163,6 +165,8 @@ def play_recording(filename):
     already_saved = False
     trajectories = []
     trajectory_img = None
+    in_replay = True
+    awaiting_save_decision = True
 
     initial_frame = None
     initial_centroids = None
@@ -177,8 +181,6 @@ def play_recording(filename):
 
     cv2.namedWindow('Playback')
     cv2.createTrackbar('Position', 'Playback', 0, total_frames - 1, on_trackbar)
-
-    in_replay = True
     
     while True:
         if playing:
@@ -362,6 +364,7 @@ def play_recording(filename):
             already_saved = True
             in_replay = False
             waiting_for_input = True
+            awaiting_save_decision = False
             return
         
         # Discard Recording
@@ -377,7 +380,7 @@ def play_recording(filename):
             already_saved = True
             in_replay = False
             waiting_for_input = True
-            
+            awaiting_save_decision = False
             with input_queue.mutex:
                 input_queue.queue.clear()
             
@@ -437,8 +440,7 @@ def main_loop():
                 last_record_time = now
             cv2.putText(frame, "REC", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
-        if waiting_for_input:
-            frame = process_frame(frame)
+        frame = process_frame(frame)
         
         # Display frame
         cv2.imshow('USB Camera Feed', frame)
