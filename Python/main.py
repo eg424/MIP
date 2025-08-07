@@ -104,7 +104,7 @@ def serial_thread():
     valid_sequences = {str(i) for i in range(1,15)}.union({f"seq{i}" for i in range(1,15)}, named_sequences)
 
     while True:
-        if waiting_for_input:
+        if waiting_for_input and not in_replay:
             print("\nInput sequence to run:")
             print("  - Enter sequence number (e.g. 1) or name (e.g. seq1)")
             print("  - Or enter currents as comma-separated values (e.g. 3.0, 1.5, -2.0, 0.5) for manual input")
@@ -461,18 +461,6 @@ def main_loop():
             with input_queue.mutex:
                 input_queue.queue.clear()
             waiting_for_input = True
-
-        # Press 'Q' or 'ESC' to see playback; after playback, to return to live feedback
-        elif key in [ord('q'), 27]:
-            if final_filename and os.path.exists(final_filename) and not in_replay:
-                play_recording(final_filename)
-                final_filename = None
-                # Clear queue until new input
-                with input_queue.mutex:
-                    input_queue.queue.clear()
-                waiting_for_input = True
-            else:
-                break
         
         # Press 'X' to return to live feedback
         elif key == ord('x'):

@@ -8,11 +8,16 @@ BAUDRATE = 9600
 def main(stop_event: threading.Event = None):
     with serial.Serial(PORT, BAUDRATE, timeout=2) as ser:
         time.sleep(1)  # Wait for Arduino to reset
-        
+        ser.reset_input_buffer()
+
         # Clear any initial data
         while ser.in_waiting:
-            print(ser.readline().decode().strip())
-
+            try:
+                line = ser.readline().decode().strip()
+                print(line)
+            except UnicodeDecodeError:
+                print("[Warning] Could not decode serial line.")
+                
         start_time = time.time()
 
         while time.time() - start_time < 15:
