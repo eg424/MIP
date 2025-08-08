@@ -5,16 +5,15 @@ import time
 import heapq
 import threading
 from moduleDetection import detect_modules, draw_walls, show_nav_workspace
-from main import send_zero_pwm
+from main import send_zero_pwm, start_recording, stop_recording
 
 # Constants
-y, x = 20, 180
+y, x = 20, 190
 h, w = 325, 325
 pixels_per_mm = 271 / 32
 theta = 0
 alpha = 0
 beta = 0
-
 direction_to_serial = {
     "UP": "0,0,0,-1.5\n",
     "DOWN": "0,0,0,1.5\n",
@@ -26,10 +25,12 @@ direction_to_serial = {
     "DOWN_RIGHT": "0,-0.5,0,1.5\n"
 }
 
+
 def norm_angle(x):
     return ((round(x / 90) * 90 + 180) % 360) - 180
 
-def get_field_command(move, theta, alpha, beta):  # ⬅️ MODIFIED
+
+def get_field_command(move, theta, alpha, beta):
     theta = norm_angle(theta)
     alpha = norm_angle(alpha)
     beta = norm_angle(beta)
@@ -162,7 +163,9 @@ def path_to_directions(path):
     return directions
 
 
-def live_mode():
+import main
+
+def live_mode(ser):
     global theta, alpha, beta
     cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
     if not cap.isOpened():
@@ -180,7 +183,7 @@ def live_mode():
 
     directions = []
     direction_index = 0
-    ser = None
+    # ser = None
 
     def mouse_callback(event, x, y, flags, param):
         nonlocal goal, goal_reached, movement_enabled, directions, direction_index
@@ -231,6 +234,7 @@ def live_mode():
                     movement_enabled = False
                     directions = []
                     direction_index = 0
+                    stop_recording()
                     if ser:
                         try:
                             send_zero_pwm()
@@ -246,15 +250,15 @@ def live_mode():
                     direction_index = 0
 
                     # Only open serial if not already opened
-                    if ser is None or not ser.is_open:
-                        try:
-                            ser = serial.Serial('COM3', 9600, timeout=2)
-                            time.sleep(1)
-                        except Exception as e:
-                            print(f"Serial error opening port: {e}")
-                            movement_enabled = False
-                            directions = []
-                            direction_index = 0
+                    # if ser is None or not ser.is_open:
+                    #     try:
+                    #         ser = serial.Serial('COM3', 9600, timeout=2)
+                    #         time.sleep(1)
+                    #     except Exception as e:
+                    #         print(f"Serial error opening port: {e}")
+                    #         movement_enabled = False
+                    #         directions = []
+                    #         direction_index = 0
 
             # Send one direction command per frame if not reached goal
             if movement_enabled and directions and direction_index < len(directions) and ser and not goal_reached:
@@ -287,6 +291,7 @@ def live_mode():
             directions = []
             direction_index = 0
             theta, alpha, beta = 0, 0, 0
+            stop_recording()
             send_zero_pwm()
             if ser:
                 try:
@@ -297,6 +302,7 @@ def live_mode():
             print("Goal reset. Current set to zero.")
 
         elif key == ord('q'):
+            stop_recording()
             if ser:
                 try:
                     send_zero_pwm()
@@ -309,10 +315,10 @@ def live_mode():
                 movement_enabled = True
                 directions = []
                 direction_index = 0
-                print("Movement enabled.")
+                start_recording()  # START recording on movement start
+                print("Movement enabled and recording started.")
 
     cap.release()
     cv2.destroyAllWindows()
 
-
-live_mode()
+#live_mode()

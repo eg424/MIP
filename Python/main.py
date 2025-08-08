@@ -11,6 +11,7 @@ import importlib
 import numpy as np
 from moduleDetection import detect_modules, draw_im_dist, process_frame
 import matplotlib
+import pathPlanning
 
 # Setup
 PORT = 'COM3'
@@ -28,7 +29,6 @@ in_replay = False
 last_record_time = time.time()
 current_input_string = ""
 waiting_for_input = True 
-awaiting_save_decision = False
 input_queue = queue.Queue()
 ser = None
 pwm_zeroed = False 
@@ -38,75 +38,21 @@ colour_map = matplotlib.colormaps['tab10'].resampled(10)
 sequence_stop_event = threading.Event()
 
 
-def run_seq(seq_name):
-    global recording, out, final_filename, waiting_for_input
-    global auto_playback_filename, sequence_stop_event
-    
-    seq_path = f"Sequences.{seq_name}"
-
-    try:
-        module = importlib.import_module(seq_path)
-        print(f"Running sequence: {seq_name}")
-        
-        # If the module supports stopping, pass the stop event
-        if hasattr(module, "main"):
-            if "stop_event" in module.main.__code__.co_varnames:
-                module.main(stop_event=sequence_stop_event)
-            else:
-                module.main()
-        else:
-            print(f"'{seq_name}' does not have a 'main()' function.")
-            return
-
-        if not sequence_stop_event.is_set():
-            print(f"Sequence '{seq_name}' finished running.")
-        
-        if recording:
-            print("Stopping recording after sequence completion.")
-            stop_recording()
-            final_filename = TEMP_FILENAME
-            auto_playback_filename = TEMP_FILENAME
-            waiting_for_input = False
-
-    except ModuleNotFoundError:
-        print(f"Sequence '{seq_name}' not found.")
-    except AttributeError:
-        print(f"'{seq_name}' does not have a 'main()' function.")
-    
-    sequence_stop_event.clear()
-
-
-def stop_recording():
-    global recording, out
-    recording = False
-    if out:
-        out.release()
-    send_zero_pwm()
-    print("Recording stopped. Press 'Q' or 'ESC' to play the recording.")
-    
-    sequence_stop_event.clear()
-
-
-def send_zero_pwm():
-    global ser, pwm_zeroed
-    if ser and ser.is_open:
-        ser.write("0,0,0,0\n".encode())
-        pwm_zeroed = True
-
 
 def serial_thread():
-    global ser, current_input_string, waiting_for_input, pwm_zeroed
+    global ser, current_input_string, waiting_for_input, pwm_zeroed, in_replay
     ser = serial.Serial(PORT, BAUDRATE, timeout=2)
     time.sleep(0.5)
     # print(f"Opened serial port {PORT} at {BAUDRATE} baud.")
     
     named_sequences = {"square", "M1_straight", "M1M2_straight", "closed"}
-    
     valid_sequences = {str(i) for i in range(1,15)}.union({f"seq{i}" for i in range(1,15)}, named_sequences)
 
     while True:
-        if waiting_for_input and not awaiting_save_decision:
-
+        if waiting_for_input:
+            if in_replay:
+                continue
+            
             print("\nInput sequence to run:")
             print("  - Enter sequence number (e.g. 1) or name (e.g. seq1)")
             print("  - Or enter currents as comma-separated values (e.g. 3.0, 1.5, -2.0, 0.5) for manual input")
@@ -144,15 +90,125 @@ def serial_thread():
                 run_seq(seq_name)
                 ser = serial.Serial(PORT, BAUDRATE, timeout=2)
                 waiting_for_input = False
+                continue
+                
+            # Path Planning Mode
+            if choice.lower() == "pathplan":
+                waiting_for_input = False
+                try:
+                    run_path_planning()
+                except Exception as e:
+                    print(f"[main] Error running path planning: {e}")
+                waiting_for_input = True
+                continue
 
             else:
                 print("Invalid choice. Please enter a valid sequence number/name or manual currents.")
         else:
             time.sleep(0.1)
- 
             
+
+def open_serial():
+    global ser
+    if ser is None or not ser.is_open:
+        try:
+            ser = serial.Serial('COM3', 9600, timeout=2)
+            time.sleep(1)
+            print("[main] Serial port opened.")
+        except Exception as e:
+            print(f"[main] Could not open serial port: {e}")
+            
+
+def close_serial():
+    global ser
+    if ser and ser.is_open:
+        try:
+            ser.close()
+            print("[main] Serial port closed.")
+        except:
+            pass
+        ser = None
+
+
+def send_zero_pwm():
+    global ser, pwm_zeroed
+    if ser and ser.is_open:
+        ser.write("0,0,0,0\n".encode())
+        pwm_zeroed = True
+        
+            
+def run_seq(seq_name):
+    global recording, out, final_filename, waiting_for_input
+    global auto_playback_filename, sequence_stop_event
+    
+    seq_path = f"Sequences.{seq_name}"
+
+    try:
+        module = importlib.import_module(seq_path)
+        print(f"Running sequence: {seq_name}")
+        
+        # If the module supports stopping, pass the stop event
+        if hasattr(module, "main"):
+            if "stop_event" in module.main.__code__.co_varnames:
+                module.main(stop_event=sequence_stop_event)
+            else:
+                module.main()
+        else:
+            print(f"'{seq_name}' does not have a 'main()' function.")
+            return
+
+        if not sequence_stop_event.is_set():
+            print(f"Sequence '{seq_name}' finished running.")
+        
+        if recording:
+            print("Stopping recording after sequence completion.")
+            stop_recording()
+
+    except ModuleNotFoundError:
+        print(f"Sequence '{seq_name}' not found.")
+    except AttributeError:
+        print(f"'{seq_name}' does not have a 'main()' function.")
+    
+    sequence_stop_event.clear()
+ 
+
+def run_path_planning():
+    # Run live_mode in the current thread (blocking)
+    print("[main] Starting path planning mode. Press 'q' in path planning window to exit.")
+    open_serial()
+    pathPlanning.live_mode(ser)
+ 
+
+def start_recording():
+    global recording, out, final_filename, last_record_time, waiting_for_input
+    global pwm_zeroed, last_pwm_send_time
+    
+    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    if not recording and not input_queue.empty():
+            input_queue.get()
+            out = cv2.VideoWriter(TEMP_FILENAME, cv2.VideoWriter_fourcc(*'XVID'), DESIRED_FPS, (frame_width, frame_height))
+            recording = True
+            last_record_time = time.time()
+            waiting_for_input = False
+            
+
+def stop_recording():
+    global recording, out, waiting_for_input, final_filename, auto_playback_filename
+    recording = False
+    if out:
+        out.release()
+    send_zero_pwm()
+    print("Recording stopped. Press 'Q' or 'ESC' to play the recording.")
+    final_filename = TEMP_FILENAME
+    auto_playback_filename = TEMP_FILENAME
+    waiting_for_input = True
+    sequence_stop_event.clear()
+
+
 def play_recording(filename):
-    global final_filename, in_replay, waiting_for_input, awaiting_save_decision
+    global final_filename, in_replay, waiting_for_input
     
     print(f"Playing back: {filename}")
     cap_play = cv2.VideoCapture(filename)
@@ -166,7 +222,6 @@ def play_recording(filename):
     trajectories = []
     trajectory_img = None
     in_replay = True
-    awaiting_save_decision = True
 
     initial_frame = None
     initial_centroids = None
@@ -364,7 +419,6 @@ def play_recording(filename):
             already_saved = True
             in_replay = False
             waiting_for_input = True
-            awaiting_save_decision = False
             return
         
         # Discard Recording
@@ -380,7 +434,6 @@ def play_recording(filename):
             already_saved = True
             in_replay = False
             waiting_for_input = True
-            awaiting_save_decision = False
             with input_queue.mutex:
                 input_queue.queue.clear()
             
@@ -447,12 +500,7 @@ def main_loop():
         key = cv2.waitKey(1) & 0xFF
 
         # Start recording on new input
-        if not recording and not input_queue.empty():
-            input_queue.get()
-            out = cv2.VideoWriter(TEMP_FILENAME, cv2.VideoWriter_fourcc(*'XVID'), DESIRED_FPS, (frame_width, frame_height))
-            recording = True
-            last_record_time = time.time()
-            waiting_for_input = False
+        start_recording()
             
         # Automated playback after sequence finishes
         if auto_playback_filename:
