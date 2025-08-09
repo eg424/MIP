@@ -23,6 +23,9 @@ direction_to_serial = {
     "UP_RIGHT": "0,-0.5,0,-1.5\n",
     "DOWN_LEFT": "0,0.5,0,1.5\n",
     "DOWN_RIGHT": "0,-0.5,0,1.5\n"
+    #"DOWNWARDS": ["0,0,0,1.5" "0,-0.5,0,0" "0,0,0,-1.5" "0,0,0,0"],
+    #"RIGHTWARDS": ["0,-0.5,0,0" "0,-1.5,0,0" "0,0,0,-0.5" "0,0,0,0"],
+    #"UPWARDS": ["0,0,0,-1.5" "0,-0.5,0,0" "0,0,0,-1.5" "0,0,0,0"],
 }
 
 
@@ -249,17 +252,6 @@ def live_mode(ser):
                     directions = path_to_directions(path)
                     direction_index = 0
 
-                    # Only open serial if not already opened
-                    # if ser is None or not ser.is_open:
-                    #     try:
-                    #         ser = serial.Serial('COM3', 9600, timeout=2)
-                    #         time.sleep(1)
-                    #     except Exception as e:
-                    #         print(f"Serial error opening port: {e}")
-                    #         movement_enabled = False
-                    #         directions = []
-                    #         direction_index = 0
-
             # Send one direction command per frame if not reached goal
             if movement_enabled and directions and direction_index < len(directions) and ser and not goal_reached:
                 d = directions[direction_index]
@@ -315,7 +307,8 @@ def live_mode(ser):
                 movement_enabled = True
                 directions = []
                 direction_index = 0
-                start_recording()  # START recording on movement start
+                main.input_queue.put("pathplan_goal")  # <--- Add this line
+                main.start_recording()  # START recording on movement start
                 print("Movement enabled and recording started.")
 
     cap.release()
