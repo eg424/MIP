@@ -3,9 +3,12 @@ import numpy as np
 import serial
 import time
 import heapq
-#import threading
+import os
+import threading
+import datetime
 from moduleDetection import detect_modules, draw_walls, show_nav_workspace
 from main import send_zero_pwm, start_recording, stop_recording, input_queue
+from fsm import FiniteStateMachine
 
 # Constants
 y, x = 20, 190
@@ -26,6 +29,28 @@ direction_to_serial = {
     "DOWN_RIGHT": "0,-0.5,0,1.5\n"
 }
 
+secondary_sequences = {
+    "DOWN": [
+        ("0,0,2,1.5\n", 0.2),
+        ("0,0.5,0,0\n", 0.2),
+        ("0,0,0,0\n", 0.1)
+    ],
+    "UP": [
+        ("0,0,-2,-1.5\n", 0.2),
+        ("0,0.5,0,0\n", 0.2),
+        ("0,0,0,0\n", 0.1)
+    ],
+    "RIGHT": [
+        ("4.5,0.5,0,0\n", 0.2),
+        ("0,0,0,-1.5\n", 0.2),
+        ("0,0,0,0\n", 0.1)
+    ],
+    "LEFT": [
+        ("-4.5,-0.5,0,0\n", 0.2),
+        ("0,0,0,1.5\n", 0.2),
+        ("0,0,0,0\n", 0.1)
+    ]
+}
 
 def norm_angle(x):
     return ((round(x / 90) * 90 + 180) % 360) - 180
@@ -69,43 +94,6 @@ def get_field_command(move, theta, alpha, beta):
     return direction_to_serial[move]
 
 
-# Verify logic
-def update_orientation(move, theta, alpha, beta):
-    if move == "UP":
-        if beta == 90:
-            alpha -= 90
-        elif beta == -90:
-            alpha += 90
-        else:
-            theta -= 90
-    elif move == "DOWN":
-        if beta == 90:
-            alpha += 90
-        elif beta == -90:
-            alpha -= 90
-        else:
-            theta += 90
-    elif move == "LEFT":
-        if theta == 90:
-            alpha -= 90
-        elif theta == -90:
-            alpha += 90
-        else:
-            beta -= 90
-    elif move == "RIGHT":
-        if theta == 90:
-            alpha += 90
-        elif theta == -90:
-            alpha -= 90
-        else:
-            beta += 90
-
-    theta = norm_angle(theta)
-    alpha = norm_angle(alpha)
-    beta = norm_angle(beta)
-    return theta, alpha, beta
-
-
 def heuristic(a, b):
     return np.linalg.norm(np.array(a) - np.array(b))
 
@@ -127,11 +115,21 @@ def astar(grid, start, goal):
         for dx, dy in [(-1,0), (1,0), (0,-1), (0,1), (-1,-1), (-1,1), (1,-1), (1,1)]:
             nx, ny = current[0] + dx, current[1] + dy
             if 0 <= nx < h and 0 <= ny < w and grid[nx, ny] == 0:
-                step_cost = 1
+                # Check if diagonal
+                if abs(dx) == 1 and abs(dy) == 1:
+                    # First 5 steps from start = no penalty
+                    if len(path) <= 3:
+                        step_cost = 1
+                    else:
+                        step_cost = 1.4  # penalised diagonal
+                else:
+                    step_cost = 1  # straight move
+
                 new_cost = cost + step_cost
                 priority = new_cost + heuristic((nx, ny), goal)
                 heapq.heappush(open_set, (priority, new_cost, (nx, ny), path + [(nx, ny)]))
     return None
+
 
 
 def inflate_obstacles(occupancy_grid):
@@ -166,11 +164,37 @@ def path_to_directions(path):
 
 
 def live_mode(ser):
-    global theta, alpha, beta
+    fsm = FiniteStateMachine()
     cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
     if not cap.isOpened():
         print("Error: Could not open video capture.")
         return
+
+    # -------------------
+    # Secondary motion sequences
+    # -------------------
+    secondary_sequences = {
+        "DOWN": [
+            ("0,0.5,0,0\n", 0.2),
+            ("0,0,2,1.5\n", 0.2),
+            ("0,0,0,0\n", 0.1)
+        ],
+        "UP": [
+            ("0,0.5,0,0\n", 0.2),
+            ("0,0,-2,-1.5\n", 0.2),
+            ("0,0,0,0\n", 0.1)
+        ],
+        "RIGHT": [
+            ("4.5,0.5,0,0\n", 0.2),
+            ("0,0,0,-1.5\n", 0.2),
+            ("0,0,0,0\n", 0.1)
+        ],
+        "LEFT": [
+            ("-4.5,-0.5,0,0\n", 0.2),
+            ("0,0,0,1.5\n", 0.2),
+            ("0,0,0,0\n", 0.1)
+        ]
+    }
 
     print("Click on the occupancy grid window to set the goal point.")
     print("Press 'Enter' to start movement. Press 'r' to reset goal. Press 'q' to quit.")
@@ -179,11 +203,10 @@ def live_mode(ser):
     goal_reached = False
     movement_enabled = False
     cell_size_pixels = int(1 * pixels_per_mm)
-    tolerance_cells = 1  # Acceptable distance to goal in grid cells
+    tolerance_cells = 1
 
     directions = []
     direction_index = 0
-    # ser = None
 
     def mouse_callback(event, x, y, flags, param):
         nonlocal goal, goal_reached, movement_enabled, directions, direction_index
@@ -199,6 +222,12 @@ def live_mode(ser):
 
     cv2.namedWindow("Occupancy Grid")
     cv2.setMouseCallback("Occupancy Grid", mouse_callback)
+
+    start = None
+    waiting_for_confirmation = False
+    last_command_sent = None
+    prev_dist_to_goal = None
+    time_sent = None
 
     while True:
         ret, frame = cap.read()
@@ -243,27 +272,127 @@ def live_mode(ser):
                             pass
                         ser = None
 
-            if movement_enabled and not goal_reached and directions == [] and goal:
+            if movement_enabled and not goal_reached and not directions and goal:
                 path = astar(inflated_grid, start, goal)
                 if path and len(path) > 1:
                     directions = path_to_directions(path)
                     direction_index = 0
 
-            # Send one direction command per frame if not reached goal
             if movement_enabled and directions and direction_index < len(directions) and ser and not goal_reached:
-                d = directions[direction_index]
-                cmd = get_field_command(d, theta, alpha, beta) 
-                ser.write(cmd.encode())
-                print(f"Sent: {cmd.strip()}")
+                if not waiting_for_confirmation:
+                    d = directions[direction_index]
+                    prev_dist_to_goal = np.linalg.norm(np.array(start) - np.array(goal))
 
-                # Update orientation
-                theta, alpha, beta = update_orientation(d, theta, alpha, beta)
-                print(f"Orientation updated → θ={theta}, α={alpha}, β={beta}")
-                direction_index += 1
-                time.sleep(0.1)
-                
+                    # First move → single command
+                    if fsm.command_count == 0:
+                        cmd = get_field_command(d, fsm.theta_degrees, fsm.alpha_degrees, fsm.beta_degrees)
+                        print(f"Sending first move until movement detected: {cmd.strip()}")
+                        first_move_start_pos = start
 
-        if goal:
+                        # Parse the currents into floats so we can adjust them
+                        cmd_parts = cmd.strip().split(",")
+                        currents = [float(c) for c in cmd_parts]
+
+                        last_increase_time = time.time()
+
+                        while True:
+                            # Send current command
+                            ser.write(("{:.3f},{:.3f},{:.3f},{:.3f}\n".format(*currents)).encode())
+                            time.sleep(0.3)  # short delay between re-sends
+
+                            # Check movement
+                            ret2, frame2 = cap.read()
+                            if not ret2:
+                                break
+                            centroids2, _ = detect_modules(frame2)
+                            if centroids2:
+                                module_pos2 = centroids2[0]
+                                new_start = (module_pos2[1] // cell_size_pixels, module_pos2[0] // cell_size_pixels)
+                                distance_travelled_px = np.linalg.norm(np.array(new_start) - np.array(first_move_start_pos))
+
+                                if distance_travelled_px > 0.2:  # movement threshold in pixels
+                                    print(f"[First Move] Movement detected: {distance_travelled_px:.2f}px")
+                                    break
+
+                            # Increase current magnitude every 2 seconds if no movement
+                            if time.time() - last_increase_time >= 2.0:
+                                for i in range(len(currents)):
+                                    if currents[i] != 0.0:  # Only adjust the non-zero coil
+                                        sign = 1 if currents[i] > 0 else -1
+                                        currents[i] = round(currents[i] + sign * 0.2, 3)
+                                print(f"[First Move] No movement — increasing current to: {currents}")
+                                last_increase_time = time.time()
+
+                        # Once movement detected, record command for FSM
+                        fsm.process_command(d)
+                        direction_index += 1
+                        waiting_for_confirmation = False
+
+                    else:
+                        # Subsequent moves → sequence
+                        if d in secondary_sequences:
+                            print(f"Sending secondary sequence for: {d}")
+                            for seq_cmd, seq_delay in secondary_sequences[d]:
+                                ser.write(seq_cmd.encode())
+                                print(f"  Sent: {seq_cmd.strip()}, delay {seq_delay}s")
+                                time.sleep(seq_delay)
+                        else:
+                            cmd = get_field_command(d, fsm.theta_degrees, fsm.alpha_degrees, fsm.beta_degrees)
+                            ser.write(cmd.encode())
+                            print(f"Sent fallback: {cmd.strip()}")
+
+                        waiting_for_confirmation = True
+                        last_command_sent = d
+                        time_sent = time.time()
+
+                else:
+                    if time.time() - time_sent >= 0.2:
+                        ret2, frame2 = cap.read()
+                        if ret2:
+                            centroids2, _ = detect_modules(frame2)
+                            if centroids2:
+                                module_pos2 = centroids2[0]
+                                new_start = (module_pos2[1] // cell_size_pixels, module_pos2[0] // cell_size_pixels)
+                                new_dist_to_goal = np.linalg.norm(np.array(new_start) - np.array(goal))
+
+                                distance_travelled_px = np.linalg.norm(np.array(new_start) - np.array(start))
+                                if fsm.apply_move_feedback(distance_travelled_px, new_dist_to_goal):
+                                    # Goal reached by FSM’s definition
+                                    goal_reached = True
+                                    movement_enabled = False
+                                    directions = []
+                                    direction_index = 0
+                                    stop_recording()
+                                    if ser:
+                                        try:
+                                            send_zero_pwm()
+                                            ser.close()
+                                        except:
+                                            pass
+                                        ser = None
+                                else:
+                                    # Movement was good enough to count as a valid step
+                                    if new_dist_to_goal < prev_dist_to_goal:
+                                        fsm.process_command(last_command_sent)
+                                        direction_index += 1
+                                        start = new_start
+                                        waiting_for_confirmation = False
+                                    else:
+                                        # Failed move → retry
+                                        print("[FSM] Movement ineffective — retrying with sequence.")
+                                        if last_command_sent in secondary_sequences:
+                                            for seq_cmd, seq_delay in secondary_sequences[last_command_sent]:
+                                                ser.write(seq_cmd.encode())
+                                                print(f"  Retry Sent: {seq_cmd.strip()}, delay {seq_delay}s")
+                                                time.sleep(seq_delay)
+                                        else:
+                                            cmd = get_field_command(last_command_sent, fsm.theta_degrees, fsm.alpha_degrees, fsm.beta_degrees)
+                                            ser.write(cmd.encode())
+                                            print(f"Retry fallback: {cmd.strip()}")
+                                        time_sent = time.time()
+
+
+        if goal and start:
             path = astar(inflated_grid, start, goal)
             if path:
                 for p in path:
@@ -279,7 +408,7 @@ def live_mode(ser):
             movement_enabled = False
             directions = []
             direction_index = 0
-            theta, alpha, beta = 0, 0, 0
+            fsm.reset()
             stop_recording()
             send_zero_pwm()
             if ser:
@@ -288,7 +417,7 @@ def live_mode(ser):
                 except:
                     pass
                 ser = None
-            print("Goal reset. Current set to zero.")
+            print("Goal reset. Orientation reset.")
 
         elif key == ord('q'):
             stop_recording()
@@ -299,18 +428,19 @@ def live_mode(ser):
                 except:
                     pass
             break
+
         elif key == 13:
             if goal and not goal_reached:
+                start_recording()
                 movement_enabled = True
                 directions = []
                 direction_index = 0
                 input_queue.put("pathplan_goal")
-                start_recording()
                 print("Movement enabled and recording started.")
 
     cap.release()
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    ser = serial.Serial("COM3", 9600, timeout=2)
+    ser = serial.Serial("COM8", 9600, timeout=2)
     live_mode(ser)

@@ -31,7 +31,7 @@ colour_map = matplotlib.colormaps['tab10'].resampled(10)
 sequence_stop_event = threading.Event()
 
 # Setup
-PORT = 'COM3'
+PORT = 'COM8'
 BAUDRATE = 9600
 TIMEOUT = 2
 DESIRED_FPS = 30

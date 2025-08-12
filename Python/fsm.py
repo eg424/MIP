@@ -40,6 +40,7 @@ class FiniteStateMachine:
         print(f"  Alpha adjusted by {delta:+}° ({reason}).")
         self._wrap_alpha()
 
+    # Modify to add diagonal moves
     def process_command(self, command):
         command = command.upper()
         if command not in ['UP', 'DOWN', 'LEFT', 'RIGHT']:
@@ -82,11 +83,7 @@ class FiniteStateMachine:
     def _handle_subsequent_command(self, command):
         """FSM transitions stored in dictionaries to remove redundancy."""
         update = None
-
-        # Transition table: (last_alpha_command, new_command) → (mode, value, reason)
-        # mode: 'add' or 'set', value: degrees, reason: explanation
         table = {
-            # Last alpha command was LEFT
             'LEFT': {
                 'DOWN': ('set', lambda: 180 if self.alpha_degrees > 0 else -180, "LEFT followed by DOWN"),
                 'UP': ('add', -90, "LEFT followed by UP"),
@@ -130,7 +127,16 @@ class FiniteStateMachine:
                 self._add_alpha(val, reason, command)
         else:
             print(f"  No alpha change ({self.last_alpha_command} followed by {command})")
-
+            
+    def apply_move_feedback(self, distance_travelled_px, distance_to_goal_px):
+        print(f"[FSM] Move feedback — travelled {distance_travelled_px:.1f} px, {distance_travelled_px / (271/32):.2f} mm")
+        print(f"[FSM] Remaining straight-line to goal: {distance_to_goal_px:.1f} px, {distance_to_goal_px / (271/32):.2f} mm")
+        goal_threshold_px = 1
+        reached = distance_to_goal_px <= goal_threshold_px
+        if reached:
+            print("[FSM] Goal considered reached by FSM threshold.")
+        return reached
+    
 
 if __name__ == "__main__":
     simulator = FiniteStateMachine()
@@ -139,7 +145,6 @@ if __name__ == "__main__":
     while True:
         user_input = input("\nEnter command (e.g., UP, LEFT): ").strip().upper()
         if user_input == 'EXIT':
-            print("Exiting simulator. Goodbye!")
             break
         elif user_input == 'RESET':
             simulator.reset()
