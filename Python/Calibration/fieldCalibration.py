@@ -40,16 +40,20 @@ def main():
                         continue
 
                     # Validate the input for Hy to make sure it's not above 10 already
+                    if mx > 10:
+                    #if my > 10:
                     #if hx > 10:
-                    if hy > 10:
+                    #if hy > 10:
                         print("Current must start at a value less than or equal to 10.")
                         continue
 
                     print(f"Starting with currents: MX={mx}, HX={hx}, MY={my}, HY={hy}")
 
                     # Start the loop to send commands
-                    #while hx <= 10.0:
-                    while hy <= 10:
+                    while mx <= 10:
+                    #while my <= 10:
+                    # while hx <= 10.0:
+                    # while hy <= 10:
                         # Create the command string with current values
                         command = f"{mx},{hx},{my},{hy}"
 
@@ -64,8 +68,10 @@ def main():
                             print("Arduino:", line)
 
                         # Increment input by 0.5
+                        mx += 0.5
+                        #my += 0.5
                         #hx += 0.5
-                        hy += 0.5
+                        #hy += 0.5
 
                         # Wait for 3 seconds before sending the next command
                         time.sleep(3)

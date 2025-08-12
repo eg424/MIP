@@ -3,9 +3,9 @@ import numpy as np
 import serial
 import time
 import heapq
-import threading
+#import threading
 from moduleDetection import detect_modules, draw_walls, show_nav_workspace
-from main import send_zero_pwm, start_recording, stop_recording
+from main import send_zero_pwm, start_recording, stop_recording, input_queue
 
 # Constants
 y, x = 20, 190
@@ -14,6 +14,7 @@ pixels_per_mm = 271 / 32
 theta = 0
 alpha = 0
 beta = 0
+
 direction_to_serial = {
     "UP": "0,0,0,-1.5\n",
     "DOWN": "0,0,0,1.5\n",
@@ -23,9 +24,6 @@ direction_to_serial = {
     "UP_RIGHT": "0,-0.5,0,-1.5\n",
     "DOWN_LEFT": "0,0.5,0,1.5\n",
     "DOWN_RIGHT": "0,-0.5,0,1.5\n"
-    #"DOWNWARDS": ["0,0,0,1.5" "0,-0.5,0,0" "0,0,0,-1.5" "0,0,0,0"],
-    #"RIGHTWARDS": ["0,-0.5,0,0" "0,-1.5,0,0" "0,0,0,-0.5" "0,0,0,0"],
-    #"UPWARDS": ["0,0,0,-1.5" "0,-0.5,0,0" "0,0,0,-1.5" "0,0,0,0"],
 }
 
 
@@ -71,6 +69,7 @@ def get_field_command(move, theta, alpha, beta):
     return direction_to_serial[move]
 
 
+# Verify logic
 def update_orientation(move, theta, alpha, beta):
     if move == "UP":
         if beta == 90:
@@ -136,7 +135,7 @@ def astar(grid, start, goal):
 
 
 def inflate_obstacles(occupancy_grid):
-    inflation_cells = int(np.ceil(1.5))  # 1.5 mm
+    inflation_cells = int(np.ceil(1.5))  # 1.5 mm radius
     kernel_size = inflation_cells * 2
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
     return cv2.dilate(occupancy_grid, kernel, iterations=1)
@@ -165,8 +164,6 @@ def path_to_directions(path):
             directions.append("DOWN_RIGHT")
     return directions
 
-
-import main
 
 def live_mode(ser):
     global theta, alpha, beta
@@ -307,11 +304,13 @@ def live_mode(ser):
                 movement_enabled = True
                 directions = []
                 direction_index = 0
-                main.input_queue.put("pathplan_goal")  # <--- Add this line
-                main.start_recording()  # START recording on movement start
+                input_queue.put("pathplan_goal")
+                start_recording()
                 print("Movement enabled and recording started.")
 
     cap.release()
     cv2.destroyAllWindows()
 
-#live_mode()
+if __name__ == "__main__":
+    ser = serial.Serial("COM3", 9600, timeout=2)
+    live_mode(ser)

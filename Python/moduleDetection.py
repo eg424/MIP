@@ -21,11 +21,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import itertools
+import time
 
 # Constants
 y, x = 20, 190
 h, w = 325, 325
 pixels_per_mm = 271 / 32
+
+# Global
+centroid_history = []
 
 # Select 'loop', 'single', or 'live' 
 mode = 'live' 
@@ -110,7 +114,56 @@ def process_image(img, filename=""):
     plt.show()
 
 
+def detect_walls(frame):
+    # HSV colourspace
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    hsv_cropped = hsv[y:y + h, x:x + w]
+    
+    # Thresholding values
+    lower_red1 = np.array([0, 20, 80])
+    upper_red1 = np.array([25, 255, 255])
+    lower_red2 = np.array([160, 20, 80])
+    upper_red2 = np.array([180, 255, 255])
+
+    # Red colour detection mask
+    mask1 = cv2.inRange(hsv_cropped, lower_red1, upper_red1)
+    mask2 = cv2.inRange(hsv_cropped, lower_red2, upper_red2)
+    red_mask = cv2.bitwise_or(mask1, mask2)
+
+    # Find red boundaries
+    red_contours, _ = cv2.findContours(red_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    
+    return frame, red_mask, red_contours
+
+
+def draw_walls(frame):
+    frame, red_mask, red_contours = detect_walls(frame)
+    for cnt in red_contours:
+        area = cv2.contourArea(cnt)
+        if area > 500 or area < 20000:
+            cnt += np.array([[x, y]])  # Offset to frame coordinates
+            cv2.drawContours(frame, [cnt], -1, (0, 0, 255), 2)
+        
+    return frame, red_contours
+    
+
+def draw_im_dist(frame, centroids, pixels_per_mm):
+    for (pt1, pt2) in itertools.combinations(centroids, 2):
+        dx = pt2[0] - pt1[0]
+        dy = pt2[1] - pt1[1]
+        pixel_distance = np.hypot(dx, dy)
+        mm_distance = pixel_distance / pixels_per_mm
+
+        mid_point = ((pt1[0] + pt2[0]) // 2, (pt1[1] + pt2[1]) // 2)
+
+        cv2.line(frame, pt1, pt2, (255, 255, 0), 1)
+        cv2.putText(frame, f"{mm_distance:.1f} mm", mid_point,
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+
 def detect_modules(frame):
+    global centroid_history, _last_known_centroid
+    
     # Binary colourspace
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     gray_cropped = gray[y:y + h, x:x + w]
@@ -161,10 +214,6 @@ def detect_modules(frame):
 
         elif 0.9 <= aspect_ratio < 0.95 and area > 3000:
             structure = "Ring"
-        
-        # Draw boundaries of detected module/structure
-        cv2.drawContours(frame, [box], 0, (0, 255, 0))
-        module_boxes.append(box)
 
         # Calculate centroid(s)
         M = cv2.moments(cnt)
@@ -172,8 +221,17 @@ def detect_modules(frame):
             cX = int(M["m10"] / M["m00"]) + x
             cY = int(M["m01"] / M["m00"]) + y
             centroids.append((cX, cY))
+            module_boxes.append(box)
             cv2.circle(frame, (cX, cY), 2, (0, 0, 255), -1)
+            cv2.drawContours(frame, [box], 0, (0, 255, 0))
             cv2.putText(frame, structure, (cX, cY), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+    
+    # Live trajectory distance computation        
+    ts = time.time()
+    if len(centroids) > 0:
+        centroid_history.append((ts, centroids[0][0], centroids[0][1]))
+    else:
+        pass
 
     # for i, ar in enumerate(aspect_ratios, 1):
     #     print(f"Module {i} aspect ratio: {ar:.2f}")
@@ -183,54 +241,7 @@ def detect_modules(frame):
     return centroids, module_boxes
 
 
-def draw_im_dist(frame, centroids, pixels_per_mm):
-    for (pt1, pt2) in itertools.combinations(centroids, 2):
-        dx = pt2[0] - pt1[0]
-        dy = pt2[1] - pt1[1]
-        pixel_distance = np.hypot(dx, dy)
-        mm_distance = pixel_distance / pixels_per_mm
-
-        mid_point = ((pt1[0] + pt2[0]) // 2, (pt1[1] + pt2[1]) // 2)
-
-        cv2.line(frame, pt1, pt2, (255, 255, 0), 1)
-        cv2.putText(frame, f"{mm_distance:.1f} mm", mid_point,
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-
-
-def detect_walls(frame):
-    # HSV colourspace
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    hsv_cropped = hsv[y:y + h, x:x + w]
-    
-    # Thresholding values
-    lower_red1 = np.array([0, 20, 80])
-    upper_red1 = np.array([25, 255, 255])
-    lower_red2 = np.array([160, 20, 80])
-    upper_red2 = np.array([180, 255, 255])
-
-    # Red colour detection mask
-    mask1 = cv2.inRange(hsv_cropped, lower_red1, upper_red1)
-    mask2 = cv2.inRange(hsv_cropped, lower_red2, upper_red2)
-    red_mask = cv2.bitwise_or(mask1, mask2)
-
-    # Find red boundaries
-    red_contours, _ = cv2.findContours(red_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    
-    return frame, red_mask, red_contours
-
-
-def draw_walls(frame):
-    frame, red_mask, red_contours = detect_walls(frame)
-    for cnt in red_contours:
-        area = cv2.contourArea(cnt)
-        if area > 500 or area < 20000:
-            cnt += np.array([[x, y]])  # Offset to frame coordinates
-            cv2.drawContours(frame, [cnt], -1, (0, 0, 255), 2)
-        
-    return frame, red_contours
-    
-
-def show_nav_workspace(frame, red_contours, module_boxes, idx1=5, idx2=6):
+def show_nav_workspace(frame, red_contours, module_boxes):
     # Sort red contours by area (largest to smallest)
     sorted_contours = sorted(red_contours, key=cv2.contourArea, reverse=True)
     
@@ -241,16 +252,15 @@ def show_nav_workspace(frame, red_contours, module_boxes, idx1=5, idx2=6):
     inner_contour = sorted_contours[1]  # Workspace
     rhombus_contour = sorted_contours[2]  # Rhombus
 
-    # === 1. Create binary mask (for A* etc.) ===
+    # Binary mask
     mask = np.zeros(frame.shape[:2], dtype=np.uint8)
     cv2.drawContours(mask, [outer_contour], -1, 255, thickness=cv2.FILLED)
     cv2.drawContours(mask, [inner_contour], -1, 0, thickness=cv2.FILLED)
     cv2.drawContours(mask, [rhombus_contour], -1, 255, thickness=cv2.FILLED)
 
-    # === 2. Create visualization image ===
     vis = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
 
-    # === 3. Draw module boxes in color ===
+    # Draw module boxes
     for box in module_boxes:
         cv2.drawContours(vis, [box], -1, (0, 255, 255), 2)  # Yellow outline
         cv2.putText(vis, "Module", tuple(box[0]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
@@ -260,13 +270,12 @@ def show_nav_workspace(frame, red_contours, module_boxes, idx1=5, idx2=6):
     return mask
 
 
-
 def process_frame(frame):
     # Define workspace
     cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
 
     # Detect module(s) and their distance
-    centroids, module_boxes = detect_modules(frame)
+    _, module_boxes = detect_modules(frame)
     
     # Draw walls
     frame, red_contours = draw_walls(frame)
