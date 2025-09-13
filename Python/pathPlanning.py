@@ -1,13 +1,24 @@
+"""
+Autonomous module navigation and control with live video and serial communication.
+
+- Uses live camera feed to detect modules and workspace boundaries.
+- Builds occupancy grids from detected walls and modules, inflates obstacles for safety, and visualizes grids in real-time.
+- Implements A* path planning to compute movement sequences from module start positions to user-defined goals.
+- Translates planned movements into coil current commands for serial-controlled actuators, considering 3D orientation
+  (theta, alpha, beta) from a finite state machine (FSM).
+- Supports live feedback: FSM evaluates movement effectiveness and retries commands if progress is insufficient.
+- Records live video and occupancy grid streams during movement, with start/stop recording controls.
+- Allows user to set goals via mouse clicks, reset orientation and goal, and exit cleanly.
+"""
+
 import cv2
 import numpy as np
 import serial
 import time
 import heapq
-import os
-import threading
-import datetime
 from moduleDetection import detect_modules, draw_walls, show_nav_workspace
 from main import send_zero_pwm, start_recording, stop_recording, input_queue
+from main import recording, DESIRED_FPS, out_occ, out_live
 from fsm import FiniteStateMachine
 
 # Constants
@@ -27,29 +38,6 @@ direction_to_serial = {
     "UP_RIGHT": "0,-0.5,0,-1.5\n",
     "DOWN_LEFT": "0,0.5,0,1.5\n",
     "DOWN_RIGHT": "0,-0.5,0,1.5\n"
-}
-
-secondary_sequences = {
-    "DOWN": [
-        ("0,0,2,1.5\n", 0.2),
-        ("0,0.5,0,0\n", 0.2),
-        ("0,0,0,0\n", 0.1)
-    ],
-    "UP": [
-        ("0,0,-2,-1.5\n", 0.2),
-        ("0,0.5,0,0\n", 0.2),
-        ("0,0,0,0\n", 0.1)
-    ],
-    "RIGHT": [
-        ("4.5,0.5,0,0\n", 0.2),
-        ("0,0,0,-1.5\n", 0.2),
-        ("0,0,0,0\n", 0.1)
-    ],
-    "LEFT": [
-        ("-4.5,-0.5,0,0\n", 0.2),
-        ("0,0,0,1.5\n", 0.2),
-        ("0,0,0,0\n", 0.1)
-    ]
 }
 
 def norm_angle(x):
@@ -104,6 +92,10 @@ def astar(grid, start, goal):
     heapq.heappush(open_set, (heuristic(start, goal), 0, start, [start]))
     visited = set()
 
+    # Cardinal directions first
+    cardinal_directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    diagonal_directions = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+
     while open_set:
         _, cost, current, path = heapq.heappop(open_set)
         if current == goal:
@@ -112,24 +104,18 @@ def astar(grid, start, goal):
             continue
         visited.add(current)
 
-        for dx, dy in [(-1,0), (1,0), (0,-1), (0,1), (-1,-1), (-1,1), (1,-1), (1,1)]:
+        for dx, dy in cardinal_directions + diagonal_directions:
             nx, ny = current[0] + dx, current[1] + dy
             if 0 <= nx < h and 0 <= ny < w and grid[nx, ny] == 0:
-                # Check if diagonal
                 if abs(dx) == 1 and abs(dy) == 1:
-                    # First 5 steps from start = no penalty
-                    if len(path) <= 3:
-                        step_cost = 1
-                    else:
-                        step_cost = 1.4  # penalised diagonal
+                    step_cost = 1.4 if len(path) > 3 else 1  # penalise diagonals after first move
                 else:
-                    step_cost = 1  # straight move
+                    step_cost = 1  # cardinal directions
 
                 new_cost = cost + step_cost
                 priority = new_cost + heuristic((nx, ny), goal)
                 heapq.heappush(open_set, (priority, new_cost, (nx, ny), path + [(nx, ny)]))
     return None
-
 
 
 def inflate_obstacles(occupancy_grid):
@@ -170,34 +156,28 @@ def live_mode(ser):
         print("Error: Could not open video capture.")
         return
 
-    # -------------------
-    # Secondary motion sequences
-    # -------------------
     secondary_sequences = {
         "DOWN": [
-            ("0,0.5,0,0\n", 0.2),
-            ("0,0,2,1.5\n", 0.2),
-            ("0,0,0,0\n", 0.1)
+            ("0,0.5,0,0\n", 0.3),
+            ("0,0,2,1.5\n", 0.3),
+            ("0,0,0,0\n", 0.2)
         ],
         "UP": [
-            ("0,0.5,0,0\n", 0.2),
-            ("0,0,-2,-1.5\n", 0.2),
-            ("0,0,0,0\n", 0.1)
+            ("0,0.5,0,0\n", 0.3),
+            ("0,0,-2,-1.5\n", 0.3),
+            ("0,0,0,0\n", 0.2)
         ],
         "RIGHT": [
-            ("4.5,0.5,0,0\n", 0.2),
-            ("0,0,0,-1.5\n", 0.2),
-            ("0,0,0,0\n", 0.1)
+            ("4.5,0.5,0,0\n", 0.3),
+            ("0,0,0,-1.5\n", 0.3),
+            ("0,0,0,0\n", 0.2)
         ],
         "LEFT": [
-            ("-4.5,-0.5,0,0\n", 0.2),
-            ("0,0,0,1.5\n", 0.2),
-            ("0,0,0,0\n", 0.1)
+            ("-4.5,-0.5,0,0\n", 0.3),
+            ("0,0,0,1.5\n", 0.3),
+            ("0,0,0,0\n", 0.2)
         ]
     }
-
-    print("Click on the occupancy grid window to set the goal point.")
-    print("Press 'Enter' to start movement. Press 'r' to reset goal. Press 'q' to quit.")
 
     goal = None
     goal_reached = False
@@ -234,6 +214,17 @@ def live_mode(ser):
         if not ret:
             print("Failed to grab frame.")
             break
+        
+        if recording and out_occ is not None and out_live is not None:
+            now = time.time()
+            if now - last_record_time >= 1.0 / DESIRED_FPS:
+                live_rec = frame.copy()
+                occ_rec = resized_vis.copy()
+                cv2.putText(live_rec, "REC", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                cv2.putText(occ_rec, "REC", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                out_live.write(live_rec)
+                out_occ.write(occ_rec)
+                last_record_time = now
 
         centroids, module_boxes = detect_modules(frame)
         frame, red_contours = draw_walls(frame)
@@ -310,7 +301,7 @@ def live_mode(ser):
                                 new_start = (module_pos2[1] // cell_size_pixels, module_pos2[0] // cell_size_pixels)
                                 distance_travelled_px = np.linalg.norm(np.array(new_start) - np.array(first_move_start_pos))
 
-                                if distance_travelled_px > 0.2:  # movement threshold in pixels
+                                if distance_travelled_px > 0.3:  # movement threshold in pixels
                                     print(f"[First Move] Movement detected: {distance_travelled_px:.2f}px")
                                     break
 
@@ -319,7 +310,7 @@ def live_mode(ser):
                                 for i in range(len(currents)):
                                     if currents[i] != 0.0:  # Only adjust the non-zero coil
                                         sign = 1 if currents[i] > 0 else -1
-                                        currents[i] = round(currents[i] + sign * 0.2, 3)
+                                        currents[i] = round(currents[i] + sign * 0.3, 3)
                                 print(f"[First Move] No movement — increasing current to: {currents}")
                                 last_increase_time = time.time()
 
@@ -346,7 +337,7 @@ def live_mode(ser):
                         time_sent = time.time()
 
                 else:
-                    if time.time() - time_sent >= 0.2:
+                    if time.time() - time_sent >= 0.3:
                         ret2, frame2 = cap.read()
                         if ret2:
                             centroids2, _ = detect_modules(frame2)
@@ -442,5 +433,5 @@ def live_mode(ser):
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    ser = serial.Serial("COM8", 9600, timeout=2)
+    ser = serial.Serial("COM3", 9600, timeout=2)
     live_mode(ser)

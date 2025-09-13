@@ -1,1 +1,0 @@
-Modules merged into one at frame 288 (time = 9.60 s)

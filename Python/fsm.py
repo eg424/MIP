@@ -1,3 +1,15 @@
+"""
+Finite State Machine (FSM) simulator for 3D rotational command sequences.
+
+- Simulates rotations along three axes: Theta (X-axis), Beta (Y-axis), and Alpha (Z-axis).
+- Processes sequential movement commands: 'UP', 'DOWN', 'LEFT', and 'RIGHT', including diagonal interactions.
+- Tracks command history, first command type, and last Alpha-modifying command to determine subsequent rotations.
+- Automatically wraps Alpha rotations to stay within [-180°, 180°].
+- Provides textual feedback for each command, showing updated angles and reasoning behind adjustments.
+- Supports live user interaction with reset and exit options.
+- Includes move feedback functionality to report distances travelled versus goal position.
+"""
+
 class FiniteStateMachine:
     def __init__(self):
         self.theta_degrees = 0

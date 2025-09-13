@@ -1,19 +1,14 @@
 """
-Precisely detects centroids of modules in all configurations
-and distance between them.
+Module detection and distance measurement in images or live video feed.
 
-- "detect_modules" is called in main.py for trajectory tracking.
-- "process_image" and "process_frame" are used in this script under
-different modes.
-    * process_image crops the workspace according to black values,
-      rather than manually.
-
-Modes:
-- loop: process all images in the "Images" folder
-- single: process one specific image file
-- live: live camera feed processing. 
-    * NOTE: Cannot be run simultaneously with main.py,
-      close the terminal before, or use a different mode.
+- Supports three operation modes: 'loop' for processing all images in a folder, 'single' for processing one image,
+  and 'live' for real-time video from a USB camera (device 1).
+- Detects modules, chains, rings, and other structures based on contour area and aspect ratio, excluding red regions identified as walls.
+- Calculates centroids of detected modules and computes pairwise distances in millimeters.
+- Draws bounding boxes, centroids, and measured distances on processed frames.
+- Identifies workspace boundaries and visualizes navigable areas using detected red contours.
+- Provides interactive matplotlib plots for static images showing original, cropped, and processed module groups.
+- Live mode displays real-time annotated video with detected modules and workspace overlays.
 """
 
 import cv2
@@ -35,7 +30,7 @@ centroid_history = []
 mode = 'live' 
 
 # Paths for image files/folder for modes
-folder_path = r'C:\Users\erikg\MIP\Python\Images'  # Loop mode
+folder_path = r'C:\Users\erikg\MIP\Python\Images'  # Path for loop mode
 single_image_path = r'C:\Users\erikg\MIP\Python\Images\4mod2ch2liq.png'  # Change accordingly
 
 
@@ -55,8 +50,7 @@ def process_image(img, filename=""):
     # print(f"Workspace bounding box: x={x}, y={y}, w={w}, h={h}")
 
     cropped = gray[y:y + h, x:x + w]
-    blurred_cropped = cv2.medianBlur(cropped, 5)
-    _, th_cropped = cv2.threshold(blurred_cropped, 82, 255, cv2.THRESH_BINARY)
+    _, th_cropped = cv2.threshold(cropped, 82, 255, cv2.THRESH_BINARY)
 
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
     closed = cv2.morphologyEx(th_cropped, cv2.MORPH_CLOSE, kernel)
@@ -162,7 +156,7 @@ def draw_im_dist(frame, centroids, pixels_per_mm):
 
 
 def detect_modules(frame):
-    global centroid_history, _last_known_centroid
+    global centroid_history
     
     # Binary colourspace
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -181,6 +175,7 @@ def detect_modules(frame):
 
     centroids = []
     module_boxes = []
+    structures = []
     aspect_ratios = []
 
     # Detect modules
@@ -204,16 +199,19 @@ def detect_modules(frame):
         
         structure = "Unknown"
         if area < 1000:
-            structure = "Module"
+            if 0.6 <= aspect_ratio < 0.9:
+                structure = "Gripper"
+            else:
+                structure = "Module"
         elif 0.2 <= aspect_ratio < 0.6:
             structure = "Chain"
-        elif 0.6 <= aspect_ratio < 0.9 and area > 1000:
-            structure = "Gripper"
-        elif 0.9 <= aspect_ratio <= 1.1:
+        elif 0.95 <= aspect_ratio <= 1.1:
             structure = "Square"
-
-        elif 0.9 <= aspect_ratio < 0.95 and area > 3000:
-            structure = "Ring"
+        elif 0.9 <= aspect_ratio < 0.95:
+            if area > 3000:
+                structure = "Ring"
+            else:
+                structure = "Gripper"
 
         # Calculate centroid(s)
         M = cv2.moments(cnt)
@@ -222,6 +220,8 @@ def detect_modules(frame):
             cY = int(M["m01"] / M["m00"]) + y
             centroids.append((cX, cY))
             module_boxes.append(box)
+            structures.append(structure)
+            
             cv2.circle(frame, (cX, cY), 2, (0, 0, 255), -1)
             cv2.drawContours(frame, [box], 0, (0, 255, 0))
             cv2.putText(frame, structure, (cX, cY), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
@@ -238,7 +238,7 @@ def detect_modules(frame):
     
     draw_im_dist(frame, centroids, pixels_per_mm)
 
-    return centroids, module_boxes
+    return centroids, module_boxes, structures
 
 
 def show_nav_workspace(frame, red_contours, module_boxes):
@@ -275,7 +275,7 @@ def process_frame(frame):
     cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
 
     # Detect module(s) and their distance
-    _, module_boxes = detect_modules(frame)
+    _, module_boxes, _ = detect_modules(frame)
     
     # Draw walls
     frame, red_contours = draw_walls(frame)

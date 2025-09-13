@@ -1,3 +1,17 @@
+"""
+Main control and recording interface for modular robot experiments.
+
+Features:
+- Live USB camera feed processing with module detection and workspace visualization.
+- Manual, sequence-based, or path-planning control of robot modules via serial communication.
+- Supports user-defined coil currents, pre-defined sequences, and live path planning.
+- Handles recording of live camera feed and occupancy grids with optional trajectory overlays.
+- Provides playback interface with frame scrubbing, trajectory visualization, and save/discard options.
+- Tracks module merging and reconfiguration events, producing summary files and images.
+- Safety features: periodic zeroing of PWM currents, clean exit, and interruptible sequences.
+- Integrates with external modules: 'moduleDetection' for vision and 'pathPlanning' for autonomous movement.
+"""
+
 import cv2
 import signal
 import sys
@@ -11,7 +25,7 @@ import importlib
 import math
 from moduleDetection import detect_modules, process_frame
 import matplotlib
-import pathPlanning
+import pathPlanning # Comment out if running pathPlanning.py
 
 # Globals
 cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
@@ -29,9 +43,11 @@ last_pwm_send_time = 0
 auto_playback_filename = None
 colour_map = matplotlib.colormaps['tab10'].resampled(10)
 sequence_stop_event = threading.Event()
+out_occ = None
+out_live = None
 
 # Setup
-PORT = 'COM8'
+PORT = 'COM3'
 BAUDRATE = 9600
 TIMEOUT = 2
 DESIRED_FPS = 30
@@ -58,10 +74,9 @@ def serial_thread():
             
             choice = input("Enter desired sequence: ").strip()
             
-            # Detect manual PWM input (comma-separated floats)
+            # Manual Input
             if ',' in choice:
                 try:
-                    floats = [float(p.strip()) for p in choice.split(',')]
                     current_input_string = choice
                     input_queue.put(choice)
                     waiting_for_input = False
@@ -73,6 +88,7 @@ def serial_thread():
                     print("Invalid currents input. Please enter comma-separated floats.")
                 continue
 
+            # Sequences
             if choice in valid_sequences:
                 if choice.isdigit():
                     seq_name = f"seq{choice}"
@@ -85,11 +101,11 @@ def serial_thread():
                  
                 run_seq(seq_name)
                 open_serial()
-                waiting_for_input = False
+                waiting_for_input = True
                 continue
                 
-            # Path Planning Mode
-            if choice.lower() == "pathplan":
+            # Path Planning
+            if choice.lower() == "pp":
                 waiting_for_input = False
                 current_input_string = "pathplan"
                 print("Path Planning mode selected. Recording will start when you set a goal and press Enter.")
@@ -99,7 +115,6 @@ def serial_thread():
                     print(f"[main] Error running path planning: {e}")
                 waiting_for_input = True
                 continue
-
             else:
                 print("Invalid choice. Please enter a valid sequence number/name or manual currents.")
         else:
@@ -117,9 +132,8 @@ def open_serial():
     bytesize=serial.EIGHTBITS,
     parity=serial.PARITY_NONE,
     stopbits=serial.STOPBITS_ONE
-)
+    )
             time.sleep(1)
-            # print("[main] Serial port opened.")
         except Exception as e:
             print(f"[main] Could not open serial port: {e}")
             
@@ -129,7 +143,6 @@ def close_serial():
     if ser and ser.is_open:
         try:
             ser.close()
-            # print("[main] Serial port closed.")
         except:
             pass
         ser = None
@@ -152,7 +165,7 @@ def run_seq(seq_name):
         module = importlib.import_module(seq_path)
         print(f"Running sequence: {seq_name}")
         
-        # If the module supports stopping, pass the stop event
+        # Interrupt sequence if 'r' pressed
         if hasattr(module, "main"):
             start_recording()
             if "stop_event" in module.main.__code__.co_varnames:
@@ -182,50 +195,47 @@ def run_path_planning():
     # Run live_mode in the current thread (blocking)
     print("[main] Starting path planning mode. Press 'q' in path planning window to exit.")
     open_serial()
-    pathPlanning.live_mode(ser)
-    #pathPlanning2.live_mode(ser)
- 
+    pathPlanning.live_mode(ser) 
 
-def start_recording():
-    global recording, out, last_record_time, waiting_for_input
+
+def start_recording(occ_size=None, live_size=None):
+    global recording, out, out_occ, out_live, last_record_time, waiting_for_input
     
-    _, frame = cap.read()
     recording = True
+    if not input_queue.empty():
+        input_queue.get()
 
-    if recording:
-        if not input_queue.empty():
-            input_queue.get()
-
+    if occ_size and live_size:
+        # Two separate writers for pp mode
+        out_occ = cv2.VideoWriter("temp_occ.avi", cv2.VideoWriter_fourcc(*'XVID'), DESIRED_FPS, occ_size)
+        out_live = cv2.VideoWriter("temp_live.avi", cv2.VideoWriter_fourcc(*'XVID'), DESIRED_FPS, live_size)
+    else:
+        # Normal single writer mode
         out = cv2.VideoWriter(TEMP_FILENAME, cv2.VideoWriter_fourcc(*'XVID'), DESIRED_FPS, (FRAME_WIDTH, FRAME_HEIGHT))
-        recording = True
-        last_record_time = time.time()
-        waiting_for_input = False
-        cv2.putText(frame, "REC", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-        print("Recording started. Press 'R' to stop recording.")
-            
+
+    last_record_time = time.time()
+    waiting_for_input = False
+    print("Recording started. Press 'R' to stop recording.")
+
 
 def stop_recording():
-    global recording, out, waiting_for_input, final_filename, auto_playback_filename
-    global pwm_zeroed, last_pwm_send_time
+    global recording, out, out_occ, out_live, auto_playback_filename
 
     recording = False
     if out:
         out.release()
         out = None
+        auto_playback_filename = TEMP_FILENAME
+    if out_occ:
+        out_occ.release()
+        out_occ = None
+    if out_live:
+        out_live.release()
+        out_live = None
     sequence_stop_event.set()
     send_zero_pwm()
-    pwm_zeroed = True
-    last_pwm_send_time = 0
-
-    print("Recording stopped. Press 'Q' or 'ESC' to play the recording.")
-    final_filename = TEMP_FILENAME
-    auto_playback_filename = TEMP_FILENAME
-    waiting_for_input = True
-
-    # Clear any pending inputs
-    with input_queue.mutex:
-        input_queue.queue.clear()
-
+    print("Recording stopped.")
+    
 
 def save_video(filename, current_input_string):
     # Prepare new filename
@@ -262,7 +272,7 @@ def save_video(filename, current_input_string):
     cap_video.release()
     out_video.release()
     
-    # Replace original file with the overlayed video
+    # Replace original file with the overlaid video
     os.remove(new_filename)
     os.rename(temp_overlay_filename, new_filename)
     already_saved = True
@@ -355,13 +365,25 @@ def detect_merge(trajectories, new_filename, fps, initial_frame, initial_centroi
             print("Modules did not merge into one during the recording.")
 
 
+def detect_reconfig(frame, structures, current_frame, fps, initial_structure):
+    if "Chain" in structures and initial_structure is None:
+        initial_structure = "Chain"
+
+    # Detect Chain to Gripper transition
+    if initial_structure == "Chain" and "Gripper" in structures:
+        reconfig_time = current_frame / fps
+        print(f"Reconfig detected: {reconfig_time:.2f} s")
+        initial_structure = None
+
+    return initial_structure, frame
+
 def play_recording(filename):
     global final_filename, in_replay, waiting_for_input
     
     print(f"Playing back: {filename}")
     cap_play = cv2.VideoCapture(filename)
     total_frames = int(cap_play.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap_play.get(cv2.CAP_PROP_FPS)
+    fps = DESIRED_FPS
     delay = int(1000 / fps)
 
     playing = True
@@ -369,6 +391,7 @@ def play_recording(filename):
     already_saved = False
     trajectories = []
     in_replay = True
+    initial_structure = None
 
     initial_frame = None
     initial_centroids = None
@@ -392,9 +415,11 @@ def play_recording(filename):
             
             current_frame = int(cap_play.get(cv2.CAP_PROP_POS_FRAMES))
             cv2.setTrackbarPos('Position', 'Playback', current_frame)
-            centroids, _ = detect_modules(frame)
             
-            # Save first frame and initial centroids for later check
+            centroids, _, structures = detect_modules(frame)
+            initial_structure, frame = detect_reconfig(frame, structures, current_frame, fps, initial_structure)
+            
+            # Save first frame structures
             if initial_frame is None:
                 initial_frame = frame.copy()
                 initial_centroids = centroids.copy()
@@ -417,7 +442,7 @@ def play_recording(filename):
         cv2.putText(frame, f"Duration: {current_time}", (10, 60),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         
-        # Draw trajectory paths on every frame during playback or pause
+        # Trajectory paths on every frame
         for i in range(len(trajectories[0]) if len(trajectories) > 0 else 0):
             points = []
             for t in trajectories:
@@ -457,7 +482,7 @@ def play_recording(filename):
 
             # Save trajectory image using last frame and trajectories
             if len(trajectories) > 0 and len(trajectories[0]) > 0:
-                save_img(new_filename, trajectories, fps, total_frames, initial_frame, initial_centroids) # Test
+                save_img(new_filename, trajectories, fps, total_frames, initial_frame, initial_centroids)
                         
             # Confirmation Overlay
             cv2.putText(frame, "SAVED", (200, 200),
@@ -508,7 +533,7 @@ def play_recording(filename):
                 print(f"Recording saved as {new_filename}")
                 final_filename = new_filename
                 break
-            elif choice == 'n': # Test if it works fine, missing a few flags
+            elif choice == 'n':
                 os.remove(filename)
                 print("Recording discarded.")
                 final_filename = None
@@ -549,10 +574,15 @@ def main_loop():
         # Automated playback after sequence finishes            
         if auto_playback_filename:
             filename_to_play = auto_playback_filename
-            auto_playback_filename = None  # Reset before playing
-            play_recording(filename_to_play)
-            final_filename = None  # It will be reset in playback if saved/discarded
-            input_queue.queue.clear() # Test
+            auto_playback_filename = None
+            # For pp mode recordings (both feeds)
+            if current_input_string.lower() == 'pp':
+                play_recording("temp_live.avi")
+                play_recording("temp_occ.avi")
+            else:
+                play_recording(filename_to_play)
+            final_filename = None
+            input_queue.queue.clear()
             waiting_for_input = True
         
         # Press 'X' to return to live feedback
@@ -564,7 +594,7 @@ def main_loop():
             if not recording:
                 start_recording()
             else:
-                stop_recording() # Test if it works
+                stop_recording()
     cleanup_and_exit()
 
 
