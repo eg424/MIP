@@ -1,199 +1,144 @@
-# Helmholtz Coil Control System
-
+# Design and Control of Modular Magnetic Millirobots for Multimodal Locomotion, Shape Reconfiguration and Grasping
+<div align="center">
+<img width="1185" height="1116" alt="image" src="https://github.com/user-attachments/assets/8b2384aa-344d-4957-ba02-058138c889a5" />
+</div>
 
 ## Overview
 
-This branch contains code used to control and calibrate the Helmholtz coil system, designed for manipulating magnetic microrobots. It includes scripts for camera-based visualization, serial communication, Arduino PWM control, and automated calibration.
+The project presents a modular magnetic millirobotic platform capable of:
+- **Single-module locomotion** using Helmholtz and Maxwell coil inputs.
+- **Multimodal reconfiguration** into chains, squares, and grippers.
+- **Closed-loop navigation** with real-time vision feedback and A* path planning.  
+All functions are achieved at **low magnetic field strengths (<13 mT)** using a compact **2-D electromagnetic setup**.
 
-## Contents
+The framework consists of three layers:
 
-* `serial_cam.py` – Unified interface for sending coil current values and automatically recording the camera feed with synchronized control.
-* `camera.py` – Live video feed and recording of workspace for positioning and experiment tracking.
-* `serial_interface.py` – Interface to send custom current commands to Arduino via serial communication.
-* `serial_cal_test.py` – Automated script to incrementally increase current for magnetic field calibration.
-* `modifiedPWM.ino` – Arduino code with calibrated parameters to generate PWM signals for coil current control.
-* `originalPWM.ino` – The legacy version of the Arduino control script, preserved for reference.
+1. **Arduino firmware** for low-level current control of electromagnetic coils.
+2. **Python framework** for experiment orchestration, computer vision, recording, and autonomous path planning.
+3. **MATLAB tools** for post-processing and statistical analysis of recorded trajectories.
 
-### Testing Scripts
+## Key Features
 
-* `seq1.py` - Repeatedly sends a fixed sequence of coil current commands to Hx, Hy with 0.5-second delays.
+- **Magnetic actuation control** via serial communication with external drivers.  
+- **Vision-based module detection** (`moduleDetection.py`) using OpenCV for real-time tracking.  
+- **Finite State Machine (FSM)** (`FiniteStateMachine.py`) for handling motion commands and transformations.  
+- **Path planning mode** with goal setting and automated trajectory visualization.  
+- **Sequence execution** (`Sequences/`) for predefined current input patterns.  
+- **Automated recording and analysis** with trajectory overlays, merge detection, and reconfiguration logging.
 
-## System Overview
+## Repository Structure
 
-This system allows for:
+```
+MIP/
+├── Arduino/
+│   ├── EMS.ino # Arduino code for coil current control
+│   └── originalPWM.ino # Legacy version
+├── MATLAB/
+│   ├── Trials/ # Raw trial data
+│   ├── DataAnalysis.m # Post-processing and plotting
+│   ├── *.png / *.xlsx # Analysis figures and datasets
+├── Python/
+│   ├── Images/ # Module configuration dataset
+│   ├── Basic Interfacing/ # Camera, calibration, serial tools
+│   ├── Sequences/  # Predefined coil actuation sequences
+│   ├── main.py # Main entry point (control + recording)
+│   ├── pathPlanning.py # Path planning and trajectory execution
+│   ├── FiniteStateMachine.py # FSM for command-based motion simulation
+│   ├── moduleDetection.py # Vision-based module detection and tracking
+│   ├── README.md # Project documentation
+```
 
-* **Precise control of four independent coil channels** (MX, HX, MY, HY) in a Helmholtz configuration.
-* **Live visualization** for manual microrobot positioning.
-* **Recording and playback** of microrobot movement.
-* **Calibrated PWM output** to ensure accurate current delivery.
-* **Automated current sweep** to aid in creating calibration curves using a Gaussmeter.
+## Hardware Setup
 
-## `serial_cam.py`
+* **Modular robot platform** with electromagnetic coil actuation.
+* **Arduino** microcontroller controlling 4 coil channels.
+* **USB camera** for live vision-based tracking.
+* **DC power supply** with current-limiting enabled (safety-critical).
+* **Gaussmeter** (optional) for magnetic field calibration.
 
-### Description
-
-An integrated script that **automatically begins recording** video as soon as new current values are sent over serial. This combines the functionality of both `serial_interface.py` and `camera.py` into a **synchronized control-recording system**.
-
-### Key Features
-
-- **Automatic recording**: Starts video capture immediately after sending current input values to the Arduino.
-- **Input-based filename**: Recordings are saved with the user-inputted current values and a timestamp.
-- **Real-time camera display** with a "REC" overlay.
-- **Interactive playback mode**:
-  - `q` or `Esc`: View last recording.
-  - `space`: Pause/resume.
-  - `s`: Save recording.
-  - `n`: Discard recording.
-- **PWM zeroing mode**: Pressing `r` stops recording and sends `0,0,0,0` repeatedly over serial to safely idle the coils.
-- **Clean exit** with proper release of serial, video, and GUI resources.
-
-### Input Format
-
-* User is prompted for: MX, HX, MY, HY
-* Example input: 2.0, 1.5, -2.0, 0.5
-* This command is sent to the Arduino, and recording begins automatically.
-
-### Controls
-
-| Key        | Action                                       |
-|------------|----------------------------------------------|
-| `r`        | Stop recording and enter zero-current mode   |
-| `q` / `Esc`| Playback last recording / Exit playback mode |
-| `s`        | Save current playback video                  |
-| `n`        | Discard current playback video               |
-| `space`    | Toggle pause/play during playback            |
+> **Safety:** Ensure coil currents do not exceed **10 A** on HX/HY channels. Always enable current limiting on the power supply.
 
 
-## `camera.py`
+## Software Requirements
 
-### Description
+* **Arduino IDE** (to flash `EMS.ino`)
+* **Python 3.9+** with:
 
-* Opens a live video feed from a connected USB camera.
-* Press `r` to **start/stop recording**.
-* Press `q` or `Esc` to **stop and review** the most recent recording.
-* After recording, the video will automatically **play back** with support for:
-  * Pause/resume with `space`
-  * Seeking using a trackbar
-  * Save the recording with `s`
-  * Discard the recording with `n`
- 
-### Key Features
-* Real-time frame capture with consistent playback speed.
-* Overlay showing current state (PLAY / PAUSE) and elapsed time.
-* Frame-accurate navigation and saving option after each recording.
+  * `opencv-python`
+  * `numpy`
+  * `matplotlib`
+  * `pyserial`
+* **MATLAB** (for analysis & plotting)
 
-### Use Case
-
-Used during field measurement experiments to ensure correct **probe placement** and **microrobot movement tracking**.
-
-## `serial_cal_test.py`
-
-### Description
-
-* Connects to an Arduino via serial.
-* Requests initial current values for coils.
-* Automatically increments the HY channel by **+0.5A every 3 seconds** until it reaches 10A.
-* Useful for **generating calibration curves** using Gaussmeter measurements.
-
-### Example Use
+Install Python dependencies with:
 
 ```bash
-python serial_cal_test.py
+pip install -r requirements.txt
 ```
 
-When prompted, enter:
+## Workflow
 
-```
-0, 0, 0, 0
-```
+### 1. Upload Firmware
 
-## `serial_interface.py`
+Flash `Arduino/EMS.ino` to the Arduino board. This program receives serial commands to set coil currents.
 
-### Description
+### 2. Calibrate Fields
 
-* A manual interface to send current values to the Arduino over serial. Supports values for MX, HX, MY, and HY.
-* Can be used simultaneously with `camera.py` to manually record how the module reacts to different inputs.
+Use `Python/Basic Interfacing/fieldCalibration.py` to generate calibration curves with a gaussmeter. Alternatively, `serial_interface.py` provides direct manual current control.
 
-### Example Command
+### 3. Run Experiments
 
-```
-Enter currents (e.g. 3.0, 1.5, -2.0, 0.5): 
-```
+Launch:
 
-### Use Case
-
-Used for **manual testing** and **real-time control** of the Helmholtz coil system.
-
-
-## `seq1.py`
-
-### Description
-* Connects to the serial port COM3 at 9600 baud.
-* Sends the following patterns repeatedly:
-  * [0, 1, 0, 0]
-  * [0, 0, 0, 0] (reset)
-  * [0, 0, 0, 1]
-  * [0, 0, 0, 0] (reset)
-
-* Prints the command sent to the console for logging.
-* Waits 0.5 seconds between each command.
-
----
-
-## `Helmholtz.ino`
-
-### Description
-
-* Arduino sketch for **PWM-based current control** of 4 coil drivers: MX, HX, MY, and HY.
-* Contains **calibrated slope, intercept, and current compensation factors** for HX, HY channels.
-* Reads serial input, parses current commands, and sets the appropriate PWM output.
-* Designed for **Arduino Mega 2560**.
-
-### Input Format
-
-```text
-3.0, 1.5, -2.0, 0.5
+```bash
+python Python/main.py
 ```
 
-Each value corresponds to the desired current (in Amps) for:
-`MX`, `HX`, `MY`, `HY`
+Features include:
 
-### Output
+* **Manual control**: enter custom current values.
+* **Predefined sequences**: run stored coil actuation sequences.
+* **Autonomous path planning**: select goals in live workspace view; system computes A\* path and executes movements.
 
-PWM values are automatically calculated and set on appropriate motor pins, considering direction and calibration.
+### 4. Recording & Replay
 
-## `originalPWM.ino`
+* All experiments can be recorded (AVI format).
+* Trajectories and merge/reconfiguration events are detected automatically.
+* After each run, playback allows saving/discarding videos and generating trajectory overlays.
 
-### Description
+### 5. Data Analysis
 
-* Original PWM control code used in a **previous student project**.
-* Retained here for **reference and comparison**.
-* Not recommended for use in this calibrated system.
+Run MATLAB analysis with:
 
-## Dependencies
+```matlab
+DataAnalysis.m
+```
 
-* **Hardware**:
+This script:
 
-  * Arduino Mega 2560
-  * Power drivers for coil control
-  * USB camera
-  * Gaussmeter (for calibration)
-* **Python Libraries**:
+* Loads CSV files generated during experiments.
+* Computes statistics across experiments.
+* Generates publication-ready plots (e.g., displacement, trajectory variance, time to merge).
 
-  * `pyserial`
-  * `opencv-python`
+## Example Experiment
 
-## Setup
+1. **Upload firmware** to Arduino.
+2. **Start main control**:
 
-1. Connect Arduino via USB to your computer.
-2. Upload `Helmholtz.ino` to your Arduino Mega 2560.
-3. Use `serial_cam.py` for unified control and recording of modules.
-4. Launch `serial_cal_test.py` if needed, for automated current sweeps.
-5. Optionally, use `camera.py` or `serial_interface.py` if needed.
+   ```bash
+   python Python/main.py
+   ```
+3. **Select a sequence** (e.g., `seq1`) or enter manual currents.
+4. **Record and replay** the experiment.
+5. **Save trajectory outputs** (PNG overlays, merge/reconfiguration logs).
+6. **Analyze results in MATLAB** with `DataAnalysis.m`.
 
+## Outputs
 
-## Notes
+Each experiment can produce:
 
-* Ensure correct COM port is used in `serial_interface.py` and `serial_cal_test.py`. Modify `PORT = 'COM3'` if needed.
-* All current commands are expected in **Ampere** units.
-* Calibrations are based on empirical measurements and may need adjustment for hardware changes.
+* **Videos (AVI)** – raw and annotated recordings.
+* **Trajectory plots (PNG)** – full and interval-based overlays.
+* **Merge/reconfiguration logs (TXT)** – timing of module interactions.
+* **CSV files** – displacement, centroid coordinates, and experimental metadata.
+* **MATLAB figures** – summary statistics and comparative plots.
